@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting Kubernetes / OpenShift Pods That Are Not Running — Mario Paniagua</title>
+  <meta name="description" content="A systematic workflow for diagnosing Pending, CrashLoopBackOff, ImagePullBackOff, ContainerCreating, Init and Terminating pods with kubectl and oc.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Troubleshooting Kubernetes / OpenShift Pods That Are Not Running">
+  <meta property="og:description" content="A systematic workflow for diagnosing Pending, CrashLoopBackOff, ImagePullBackOff, ContainerCreating, Init and Terminating pods with kubectl and oc.">
+  <meta property="article:published_time" content="2026-09-29">
+  <meta property="article:section" content="Kubernetes">
+  <meta property="article:tag" content="kubernetes">
+  <meta property="article:tag" content="openshift">
+  <meta property="article:tag" content="troubleshooting">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / troubleshooting-pods-not-running</p>
+
+      <article class="article prose">
+        <h1>Troubleshooting Kubernetes / OpenShift Pods That Are Not Running</h1>
+        <p class="article-meta"><span class="cat">Kubernetes</span> · <span class="level" data-level="intermediate"><span class="level-bars" aria-hidden="true">■■□</span> Intermediate</span> · <span class="reading-time">15 min read</span> · <span class="published">Published <time datetime="2026-09-29">Sep 29, 2026</time></span></p>
+        <ul class="tags"><li>kubernetes</li><li>openshift</li><li>troubleshooting</li></ul>
+
+        <p class="lead">
+          A repeatable workflow for finding out why a pod is stuck in <code>Pending</code>,
+          <code>ContainerCreating</code>, <code>Init</code>, <code>ImagePullBackOff</code>,
+          <code>CrashLoopBackOff</code> or <code>Terminating</code>, and what to do about each.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#how-it-works">How pod status works</a></li>
+              <li><a href="#workflow">Troubleshooting workflow</a></li>
+              <li><a href="#reference">Commands and examples</a></li>
+              <li><a href="#output">Reading the output</a></li>
+              <li><a href="#common-problems">Common problems by status</a></li>
+              <li><a href="#tips">Troubleshooting tips</a></li>
+              <li><a href="#best-practices">Best practices</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          The <code>STATUS</code> column of <code>kubectl get pods</code> is a summary, not a diagnosis.
+          It tells you <em>which stage</em> of the pod lifecycle failed: scheduling, volume setup,
+          image pull, init containers, the main container, or shutdown. Each stage leaves evidence
+          in a different place. Knowing where to look for each one is most of the work.
+        </p>
+        <p>
+          All commands below use <code>kubectl</code>. On OpenShift, <code>oc</code> is a superset of
+          <code>kubectl</code>: every <code>kubectl get/describe/logs</code> command works identically
+          with <code>oc</code>. OpenShift-specific commands are called out where they add something.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>A new deployment or rollout never becomes ready.</li>
+          <li>Pods restart repeatedly, or the restart counter keeps climbing.</li>
+          <li>Pods are stuck after a node failure, drain or cluster upgrade.</li>
+          <li>An application works in one namespace or cluster but not another.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li><code>kubectl</code> or <code>oc</code> logged in to the cluster.</li>
+          <li>At least <code>view</code> access to the namespace. Node-level checks (<code>describe node</code>,
+              <code>oc debug node/...</code>) need cluster-level permissions.</li>
+          <li>Metrics (<code>kubectl top</code>) need metrics-server. OpenShift ships this through its monitoring stack.</li>
+        </ul>
+
+        <h2 id="how-it-works">How pod status works</h2>
+        <p>
+          A pod has a <strong>phase</strong> (<code>Pending</code>, <code>Running</code>, <code>Succeeded</code>,
+          <code>Failed</code>, <code>Unknown</code>), and every container in it has a <strong>state</strong>
+          (<code>Waiting</code>, <code>Running</code>, <code>Terminated</code>) with a <strong>reason</strong>.
+          The <code>STATUS</code> column shows the most relevant of these, which is why you see values like
+          <code>CrashLoopBackOff</code> that aren't phases at all.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>STATUS shown</th><th>Lifecycle stage</th><th>Where the evidence is</th></tr></thead>
+            <tbody>
+              <tr><td><code>Pending</code> (no node assigned)</td><td>Scheduling</td><td>Pod events (<code>FailedScheduling</code>), node capacity/taints</td></tr>
+              <tr><td><code>ContainerCreating</code></td><td>Sandbox, network, volumes</td><td>Pod events (<code>FailedMount</code>, <code>FailedCreatePodSandBox</code>)</td></tr>
+              <tr><td><code>Init:0/2</code>, <code>Init:Error</code>, <code>Init:CrashLoopBackOff</code></td><td>Init containers</td><td>Init container logs</td></tr>
+              <tr><td><code>ErrImagePull</code>, <code>ImagePullBackOff</code></td><td>Image pull</td><td>Pod events (<code>Failed</code> pulling image)</td></tr>
+              <tr><td><code>CreateContainerConfigError</code></td><td>Container config</td><td>Pod events: missing Secret/ConfigMap/key</td></tr>
+              <tr><td><code>CrashLoopBackOff</code>, <code>Error</code>, <code>OOMKilled</code></td><td>Main container runtime</td><td>Logs (<code>--previous</code>), <code>Last State</code>, exit code</td></tr>
+              <tr><td><code>Running</code> but <code>0/1</code> READY</td><td>Readiness probe</td><td>Pod events (<code>Readiness probe failed</code>)</td></tr>
+              <tr><td><code>Terminating</code></td><td>Shutdown / deletion</td><td>Finalizers, node status, grace period</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Kubernetes retries failed image pulls and container starts with an exponential back-off
+          (10s, 20s, 40s… capped at 5 minutes). <code>ImagePullBackOff</code> and <code>CrashLoopBackOff</code>
+          just mean "failed, now waiting before the next retry". The real error happened on the previous attempt.
+        </p>
+
+        <h2 id="workflow">Troubleshooting workflow</h2>
+        <p>Work top-down. Each step narrows the problem to one lifecycle stage.</p>
+
+        <h3 id="step-1">1. Find the failing pods and their status</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get pods -n my-app -o wide
+
+# Everything not Running/Completed, across all namespaces
+kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded</code></pre>
+        <p>
+          <code>-o wide</code> adds the <code>NODE</code> column. A pending pod with no node is a
+          scheduling problem. A pod that has a node is past scheduling. If all failing pods are on the
+          same node, suspect the node rather than the application.
+        </p>
+
+        <h3 id="step-2">2. Describe the pod and read the Events</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl describe pod web-7d9c6b8f5-x2kqp -n my-app</code></pre>
+        <p>
+          Scroll straight to <code>Events:</code> at the bottom, then check <code>State</code>,
+          <code>Last State</code>, <code>Reason</code> and <code>Exit Code</code> for each container.
+          In most cases the root cause is spelled out in one of these fields.
+        </p>
+
+        <h3 id="step-3">3. Check namespace events in time order</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get events -n my-app --sort-by=.lastTimestamp
+
+# Only events for one pod
+kubectl get events -n my-app --field-selector involvedObject.name=web-7d9c6b8f5-x2kqp</code></pre>
+        <p>
+          Namespace events show related objects too: ReplicaSets that cannot create pods (quota,
+          admission, SCC), PVCs that cannot bind, and so on. By default, events are kept for only about one hour.
+        </p>
+
+        <h3 id="step-4">4. Read the logs, including the previous container</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl logs web-7d9c6b8f5-x2kqp -n my-app
+
+# Logs of the container instance that crashed (essential for CrashLoopBackOff)
+kubectl logs web-7d9c6b8f5-x2kqp -n my-app --previous
+
+# Multi-container pods: pick a container, or take all of them
+kubectl logs web-7d9c6b8f5-x2kqp -n my-app -c app
+kubectl logs web-7d9c6b8f5-x2kqp -n my-app --all-containers</code></pre>
+        <p>
+          Logs only exist once a container has started. For <code>Pending</code>,
+          <code>ContainerCreating</code> and image-pull failures there are no logs. Use the events.
+        </p>
+
+        <h3 id="step-5">5. Check the node</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get nodes
+kubectl describe node worker02
+kubectl top nodes            # OpenShift: oc adm top nodes</code></pre>
+        <p>
+          In <code>describe node</code>, check <code>Conditions</code> (<code>MemoryPressure</code>,
+          <code>DiskPressure</code>, <code>PIDPressure</code>, <code>Ready</code>), <code>Taints</code>, and
+          <code>Allocated resources</code> (requested CPU/memory versus allocatable).
+        </p>
+
+        <h3 id="step-6">6. Get inside if you need to</h3>
+        <pre data-label="read-only"><code class="language-bash"># OpenShift: start a copy of the pod with a shell, even if the original crashes on start
+oc debug pod/web-7d9c6b8f5-x2kqp -n my-app
+
+# OpenShift: shell on a node, then use the host's tools (crictl, journalctl)
+oc debug node/worker02
+chroot /host
+crictl ps -a
+journalctl -u kubelet --since "15 min ago"
+
+# Kubernetes: attach an ephemeral debug container to a running pod
+kubectl debug -it web-7d9c6b8f5-x2kqp -n my-app --image=busybox:1.36 --target=app</code></pre>
+        <p>
+          <code>oc debug pod/...</code> creates a <em>new</em> temporary pod with the same spec and
+          <code>/bin/sh</code> as the command, so you can inspect the filesystem, environment and mounted
+          volumes without the application crashing underneath you.
+        </p>
+
+        <h2 id="reference">Commands and examples</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Command</th><th>Use it for</th><th>Changes system?</th></tr></thead>
+            <tbody>
+              <tr><td><code>kubectl get pods -o wide</code></td><td>Status, restarts, node placement</td><td>No</td></tr>
+              <tr><td><code>kubectl describe pod &lt;pod&gt;</code></td><td>Container states, exit codes, events</td><td>No</td></tr>
+              <tr><td><code>kubectl get events --sort-by=.lastTimestamp</code></td><td>Timeline of what happened</td><td>No</td></tr>
+              <tr><td><code>kubectl logs &lt;pod&gt; --previous</code></td><td>Output of the crashed container</td><td>No</td></tr>
+              <tr><td><code>kubectl get pod &lt;pod&gt; -o yaml</code></td><td>Full spec and <code>status.containerStatuses</code></td><td>No</td></tr>
+              <tr><td><code>kubectl describe node &lt;node&gt;</code></td><td>Conditions, taints, allocated resources</td><td>No</td></tr>
+              <tr><td><code>kubectl get pvc</code> / <code>describe pvc</code></td><td>Volume binding problems</td><td>No</td></tr>
+              <tr><td><code>oc debug pod/&lt;pod&gt;</code></td><td>Shell in a copy of the pod</td><td>Creates a temporary pod</td></tr>
+              <tr><td><code>kubectl delete pod &lt;pod&gt;</code></td><td>Let the controller recreate a pod</td><td><strong>Yes</strong></td></tr>
+              <tr><td><code>kubectl rollout restart deploy/&lt;name&gt;</code></td><td>Restart all pods of a Deployment</td><td><strong>Yes</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="output">Reading the output</h2>
+
+        <h3>kubectl get pods</h3>
+        <pre class="output" data-label="output"><code class="language-text">NAME                     READY   STATUS             RESTARTS        AGE   IP            NODE
+web-7d9c6b8f5-x2kqp      0/1     CrashLoopBackOff   6 (2m11s ago)   9m    10.128.2.41   worker02
+api-5f7b9c4d8-8kz2m      0/1     Pending            0               4m    &lt;none&gt;        &lt;none&gt;
+worker-6c8d7f9b4-q7lwn   0/1     ImagePullBackOff   0               3m    10.131.0.17   worker01
+db-0                     0/1     ContainerCreating  0               5m    &lt;none&gt;        worker03</code></pre>
+        <ul>
+          <li><code>web</code>: started and crashed 6 times. Read <code>logs --previous</code>.</li>
+          <li><code>api</code>: no IP, no node, so the scheduler could not place it. Read its events.</li>
+          <li><code>worker</code>: scheduled, but the image cannot be pulled. Read its events.</li>
+          <li><code>db-0</code>: scheduled to <code>worker03</code> but stuck before start, usually a volume. Read its events.</li>
+        </ul>
+
+        <h3>kubectl describe pod (container section)</h3>
+        <pre class="output" data-label="output"><code class="language-text">Containers:
+  app:
+    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       OOMKilled
+      Exit Code:    137
+      Started:      Mon, 28 Sep 2026 10:14:02 +0000
+      Finished:     Mon, 28 Sep 2026 10:14:31 +0000
+    Ready:          False
+    Restart Count:  6
+    Limits:
+      memory:  256Mi
+    Requests:
+      cpu:     100m
+      memory:  128Mi</code></pre>
+        <p>
+          <code>Last State</code> describes the previous instance, the one that died. Here the
+          container exceeded its 256Mi memory limit and was killed by the kernel OOM killer.
+          Common exit codes:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Exit code</th><th>Meaning</th><th>Typical cause</th></tr></thead>
+            <tbody>
+              <tr><td><code>0</code></td><td>Process exited normally</td><td>The command finished. Long-running containers must not exit (for example, a shell script that ends)</td></tr>
+              <tr><td><code>1</code></td><td>Application error</td><td>Bad config, failed DB connection, unhandled exception. Check the logs</td></tr>
+              <tr><td><code>126</code></td><td>Command not executable</td><td>Missing execute bit, or permission denied (arbitrary UID on OpenShift)</td></tr>
+              <tr><td><code>127</code></td><td>Command not found</td><td>Wrong <code>command</code>/<code>args</code>, or binary not in the image</td></tr>
+              <tr><td><code>137</code></td><td>SIGKILL (128+9)</td><td><code>OOMKilled</code>, or killed after the grace period (for example, after a failed liveness probe)</td></tr>
+              <tr><td><code>139</code></td><td>SIGSEGV (128+11)</td><td>Segfault in the application or a native library</td></tr>
+              <tr><td><code>143</code></td><td>SIGTERM (128+15)</td><td>Normal shutdown request. Unexpected if it happens repeatedly</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Events</h3>
+        <pre class="output" data-label="output"><code class="language-text">LAST SEEN   TYPE      REASON             OBJECT                    MESSAGE
+4m          Warning   FailedScheduling   pod/api-5f7b9c4d8-8kz2m   0/6 nodes are available: 3 Insufficient memory, 3 node(s) had untolerated taint {node-role.kubernetes.io/master: }. preemption: 0/6 nodes are available: 3 No preemption victims found for incoming pod, 3 Preemption is not helpful for scheduling.
+3m          Warning   Failed             pod/worker-6c8d7f9b4-q7lwn  Failed to pull image "registry.example.com/team/worker:1.8": initializing source docker://registry.example.com/team/worker:1.8: reading manifest 1.8 in registry.example.com/team/worker: manifest unknown
+5m          Warning   FailedMount        pod/db-0                  MountVolume.SetUp failed for volume "config" : configmap "db-config" not found</code></pre>
+        <p>
+          Event messages are the most useful single source. The exact wording depends on the
+          Kubernetes version and container runtime (CRI-O on OpenShift, containerd elsewhere), but
+          the key phrases (<code>Insufficient memory</code>, <code>manifest unknown</code>,
+          <code>not found</code>) are stable enough to search for. The scheduling message is broken
+          down in detail in
+          <a href="kubernetes-pod-scheduling.html#scheduling-errors">Kubernetes Pod Scheduling</a>.
+        </p>
+
+        <h2 id="common-problems">Common problems by status</h2>
+
+        <div class="scenario">
+          <h3 id="pending">Pending</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>STATUS Pending</code>, <code>NODE &lt;none&gt;</code>, a <code>FailedScheduling</code> event.</dd>
+            <dt>Possible causes</dt>
+            <dd>
+              <ul>
+                <li><strong>Resource shortage:</strong> <code>Insufficient cpu</code> / <code>Insufficient memory</code>. Scheduling uses <em>requests</em>, not actual usage. A node at 20% CPU can still be "full" if its requests are fully allocated.</li>
+                <li><strong>Taints:</strong> <code>had untolerated taint</code>. The pod has no matching toleration.</li>
+                <li><strong>Selectors/affinity:</strong> <code>didn't match Pod's node affinity/selector</code>. On OpenShift, a project-level node selector also applies.</li>
+                <li><strong>Unbound PVC:</strong> <code>pod has unbound immediate PersistentVolumeClaims</code>.</li>
+                <li><strong>Quota:</strong> the pod is never created at all. The ReplicaSet shows <code>exceeded quota</code> in its events.</li>
+              </ul>
+            </dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl describe pod api-5f7b9c4d8-8kz2m -n my-app | sed -n '/Events:/,$p'
+kubectl describe node worker01 | grep -A 8 'Allocated resources'
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+kubectl get pvc -n my-app
+kubectl describe resourcequota -n my-app</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Lower over-sized requests, add capacity, add the right toleration/selector, or fix the StorageClass/PVC. Don't remove taints from nodes to "make it fit". They are usually there on purpose.</dd>
+            <dt>Verification</dt>
+            <dd>The pod gets a node assigned and moves to <code>ContainerCreating</code> and then <code>Running</code>.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="container-creating">ContainerCreating (stuck)</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>The pod has a node but stays in <code>ContainerCreating</code> for minutes.</dd>
+            <dt>Possible causes</dt>
+            <dd>
+              <ul>
+                <li><strong>Missing ConfigMap/Secret mounted as a volume:</strong> <code>MountVolume.SetUp failed ... configmap "db-config" not found</code>.</li>
+                <li><strong>Storage attach/mount failure:</strong> <code>FailedAttachVolume</code>, or <code>Multi-Attach error for volume ... Volume is already exclusively attached to one node</code>. A ReadWriteOnce volume is still held by a pod on another node, often after a node failure.</li>
+                <li><strong>Network (CNI) failure:</strong> <code>FailedCreatePodSandBox</code>. The node's SDN/OVN pod is unhealthy, or the node has run out of pod IPs.</li>
+              </ul>
+            </dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl get events -n my-app --field-selector involvedObject.name=db-0
+kubectl get configmap,secret -n my-app
+kubectl describe pvc data-db-0 -n my-app
+kubectl get volumeattachments | grep pvc-          # which node holds the volume
+oc get pods -n openshift-ovn-kubernetes -o wide    # OpenShift (OVN-Kubernetes) network pods</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Create the missing object in the correct namespace (names are case-sensitive and namespaced). For Multi-Attach, make sure the old pod or node really is gone before the volume is released. Never force-detach a volume that may still be written to.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="config-error">CreateContainerConfigError (missing Secret or ConfigMap key)</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>The status shows <code>CreateContainerConfigError</code>. The events say <code>Error: secret "db-credentials" not found</code> or <code>couldn't find key DB_HOST in ConfigMap my-app/app-config</code>.</dd>
+            <dt>Cause</dt>
+            <dd>An <code>env</code>/<code>envFrom</code> reference points to an object or key that doesn't exist. Volumes fail with <code>FailedMount</code> instead. Environment references fail here.</dd>
+            <dt>Resolution</dt>
+            <dd>Create the object or fix the key name. If the reference is truly optional, mark it <code>optional: true</code>. The kubelet retries automatically, so no restart is needed.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="image-pull">ErrImagePull / ImagePullBackOff</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>ErrImagePull</code> on the first failure, then <code>ImagePullBackOff</code> while waiting to retry.</dd>
+            <dt>Possible causes (match the event message)</dt>
+            <dd>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Message contains</th><th>Cause</th></tr></thead>
+                  <tbody>
+                    <tr><td><code>manifest unknown</code> / <code>not found</code></td><td>Wrong image name or tag, or the tag was deleted</td></tr>
+                    <tr><td><code>unauthorized</code> / <code>authentication required</code></td><td>Missing or wrong pull secret</td></tr>
+                    <tr><td><code>x509: certificate signed by unknown authority</code></td><td>Private registry CA not trusted by the nodes</td></tr>
+                    <tr><td><code>toomanyrequests</code></td><td>Registry rate limit (common with Docker Hub)</td></tr>
+                    <tr><td><code>i/o timeout</code> / <code>no such host</code></td><td>Node can't reach the registry: DNS, proxy, firewall</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl get pod worker-6c8d7f9b4-q7lwn -n my-app -o jsonpath='{.spec.containers[*].image}{"\n"}'
+kubectl get pod worker-6c8d7f9b4-q7lwn -n my-app -o jsonpath='{.spec.imagePullSecrets}{"\n"}'
+
+# OpenShift: try the pull from the node itself
+oc debug node/worker01
+chroot /host
+crictl pull registry.example.com/team/worker:1.8</code></pre>
+            </dd>
+            <dt>Resolution (authentication)</dt>
+            <dd>
+<pre class="changes" data-label="changes the system"><code class="language-bash">kubectl create secret docker-registry regcred -n my-app \
+  --docker-server=registry.example.com \
+  --docker-username=robot-pull \
+  --docker-password='&lt;token&gt;'
+
+# Kubernetes: attach the secret to the service account the pod uses
+kubectl patch serviceaccount default -n my-app \
+  -p '{"imagePullSecrets":[{"name":"regcred"}]}'
+
+# OpenShift equivalent
+oc secrets link default regcred --for=pull -n my-app</code></pre>
+              <p>The <code>kubectl patch</code> above replaces the whole <code>imagePullSecrets</code> list. If the service account already has pull secrets, add the new one to the list instead. Use a read-only robot/service account for pulls, never a personal login.</p>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="init">Init:0/N, Init:Error, Init:CrashLoopBackOff</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>The status shows <code>Init:0/2</code> for a long time, or <code>Init:CrashLoopBackOff</code>. The main containers never start.</dd>
+            <dt>Cause</dt>
+            <dd>Init containers run one after another, and each must exit 0 before the next starts. Typical failures: a "wait for database" loop that never succeeds, a migration job that fails, or a permission error writing to a shared volume.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash"># List init container names, then read the one that is failing
+kubectl get pod web-7d9c6b8f5-x2kqp -n my-app -o jsonpath='{.spec.initContainers[*].name}{"\n"}'
+kubectl logs web-7d9c6b8f5-x2kqp -n my-app -c wait-for-db
+kubectl logs web-7d9c6b8f5-x2kqp -n my-app -c wait-for-db --previous</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Fix whatever the init container depends on (Service name, DNS, credentials, NetworkPolicy). For a wait loop, test the same check yourself from a debug pod in the same namespace.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="crashloop">CrashLoopBackOff</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>RESTARTS</code> keeps increasing. The container runs for seconds or minutes, then dies.</dd>
+            <dt>Possible causes</dt>
+            <dd>
+              <ul>
+                <li><strong>Application crash:</strong> exit code 1 with a stack trace in <code>logs --previous</code>.</li>
+                <li><strong>OOMKilled:</strong> exit code 137, <code>Reason: OOMKilled</code>. The memory limit is too low for the workload (JVMs are a classic example), or there is a real memory leak.</li>
+                <li><strong>Liveness probe too aggressive:</strong> events show <code>Liveness probe failed</code> and <code>Container app failed liveness probe, will be restarted</code>. Often the app just starts slower than <code>initialDelaySeconds</code> allows. Use a <code>startupProbe</code>.</li>
+                <li><strong>Container exits by design:</strong> exit code 0. The command runs once and ends, but the controller (a Deployment) expects it to keep running.</li>
+                <li><strong>OpenShift security context:</strong> <code>Permission denied</code> on files or ports. With the <code>restricted-v2</code> SCC, containers run as a random non-root UID and cannot bind ports below 1024. Build images that work with an arbitrary UID in the root group.</li>
+              </ul>
+            </dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl logs web-7d9c6b8f5-x2kqp -n my-app --previous --tail=100
+kubectl describe pod web-7d9c6b8f5-x2kqp -n my-app | grep -A 6 'Last State'
+
+# OpenShift: which SCC admitted the pod
+oc get pod web-7d9c6b8f5-x2kqp -n my-app -o jsonpath='{.metadata.annotations.openshift\.io/scc}{"\n"}'</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Fix the application or its config, size memory limits based on observed usage, and relax probe timings. Don't grant <code>anyuid</code> or <code>privileged</code> SCCs just to get past a permission error. Fix the image instead.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="not-ready">Running but not Ready</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>STATUS Running</code>, <code>READY 0/1</code>, and no restarts. The Service returns 503 or times out.</dd>
+            <dt>Cause</dt>
+            <dd>The readiness probe fails. The container is <em>not</em> restarted, but it is removed from Service endpoints.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl describe pod web-7d9c6b8f5-x2kqp -n my-app | grep -iE 'readiness|probe'
+kubectl get endpointslices -n my-app -l kubernetes.io/service-name=web</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Check that the probe path/port matches what the app actually serves, and that its dependencies are up. A readiness probe that checks downstream services can take every replica out of rotation at once. Keep it focused on the pod itself.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="terminating">Terminating (stuck)</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>The pod has shown <code>Terminating</code> for much longer than its <code>terminationGracePeriodSeconds</code>.</dd>
+            <dt>Possible causes</dt>
+            <dd>
+              <ul>
+                <li><strong>Node is NotReady/unreachable:</strong> the kubelet can't confirm the containers stopped, so the API object stays.</li>
+                <li><strong>Finalizers:</strong> a controller must clean something up first, and that controller is broken or gone.</li>
+                <li><strong>Long preStop hook or grace period.</strong></li>
+              </ul>
+            </dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">kubectl get pod db-0 -n my-app -o jsonpath='{.metadata.deletionTimestamp}{"  "}{.metadata.finalizers}{"\n"}'
+kubectl get node worker03</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+              <p>Fix the node or the controller that owns the finalizer first. Force deletion is a last resort:</p>
+<pre class="changes" data-label="changes the system: destructive"><code class="language-bash">kubectl delete pod db-0 -n my-app --grace-period=0 --force</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning: force delete</span>
+                <p>This only removes the API object. The container may still be running on an unreachable node.
+                For StatefulSets this can result in <strong>two pods with the same identity writing to the same volume</strong>.
+                Confirm the node is really down (or powered off) first. Removing finalizers by hand
+                (<code>kubectl patch ... finalizers:null</code>) skips cleanup and can leave orphaned resources behind.</p>
+              </div>
+            </dd>
+          </dl>
+        </div>
+
+        <h2 id="tips">Troubleshooting tips</h2>
+        <ul>
+          <li><strong>Events expire.</strong> Capture them early (<code>kubectl get events -n ns &gt; events.txt</code>) when handing an issue over.</li>
+          <li><strong>Compare with a working pod.</strong> <code>kubectl get pod good -o yaml</code> versus the broken one often shows the difference immediately (image tag, env var, node).</li>
+          <li><strong>Look at the controller too.</strong> If no pod exists at all, <code>kubectl describe deploy/web</code> and <code>describe rs</code> will show quota or admission errors.</li>
+          <li><strong>One node, many failures?</strong> Cordon it (<code>kubectl cordon worker02</code>, which <em>changes the system</em>) to stop new pods landing there while you investigate.</li>
+          <li><strong>Deleting a pod is not a fix.</strong> The controller recreates it with the same spec. It helps only for transient node or volume problems.</li>
+          <li><strong>OpenShift:</strong> <code>oc status --suggest</code> gives a quick overview of a project, and <code>oc adm must-gather</code> collects diagnostic data for support cases.</li>
+        </ul>
+
+        <h2 id="best-practices">Best practices</h2>
+        <ul>
+          <li>Set realistic <code>requests</code> and <code>limits</code> based on measured usage. Requests drive scheduling, and limits drive OOM kills and CPU throttling.</li>
+          <li>Use a <code>startupProbe</code> for slow-starting apps, and keep liveness probes simple (the process is alive) and readiness probes pod-local.</li>
+          <li>Pin images by tag or digest, never <code>:latest</code> in production.</li>
+          <li>Build images that run as an arbitrary non-root UID. They work on OpenShift's default SCC and are safer everywhere.</li>
+          <li>Log to stdout/stderr so <code>kubectl logs</code> works, and ship logs to central storage so they survive pod deletion.</li>
+          <li>Use PodDisruptionBudgets and multiple replicas so that one failing pod doesn't cause an outage.</li>
+        </ul>
+
+        <h2 id="summary">Summary</h2>
+        <ol>
+          <li><code>get pods -o wide</code>: which stage failed, and on which node?</li>
+          <li><code>describe pod</code>: read <code>Events</code>, <code>Last State</code> and the exit code.</li>
+          <li><code>get events --sort-by=.lastTimestamp</code>: see the timeline and related objects.</li>
+          <li><code>logs --previous</code>: why did the container die?</li>
+          <li><code>describe node</code>: capacity, taints and conditions.</li>
+          <li>Fix the cause in the manifest or environment. Deleting or restarting pods rarely fixes anything by itself.</li>
+        </ol>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+</body>
+</html>

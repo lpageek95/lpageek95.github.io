@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home — Mario Paniagua</title>
+  <meta name="description" content="Personal site: Unix/OpenShift administration, networking, Kubernetes, VMware, and AI — plus a knowledge base of admin runbooks.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="index.html" aria-current="page">home</a></li>
+          <li><a href="projects.html">projects</a></li>
+          <li><a href="knowledge-base.html">knowledge-base</a></li>
+          <li><a href="resume.html">resume</a></li>
+          <li><a href="about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <section class="hero">
+        <h1>Hi, I'm Mario Paniagua<span class="cursor" aria-hidden="true"></span></h1>
+        <p class="tagline">unix · openshift · kubernetes · networking · vmware · ai</p>
+        <!-- TODO: real bio teaser (full bio lives on about.html) -->
+        <p>
+          Systems administrator and platform engineer. I keep clusters, hypervisors and
+          networks healthy, and write down how I did it so others don't have to rediscover it.
+          <a href="about.html">More about me →</a>
+        </p>
+      </section>
+
+      <section id="terminal" class="terminal" aria-label="Interactive terminal">
+        <div class="terminal-bar" aria-hidden="true">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="title">guest@site: ~</span>
+        </div>
+        <div class="terminal-body">
+          <div class="terminal-output" aria-live="polite"></div>
+          <div class="terminal-input-row">
+            <label class="terminal-prompt" for="terminal-input">guest@site:~$</label>
+            <input id="terminal-input" class="terminal-input" type="text"
+                   autocomplete="off" autocapitalize="off" spellcheck="false"
+                   aria-label="Terminal command">
+          </div>
+        </div>
+      </section>
+
+      <h2 class="prompt">ls ~/</h2>
+      <div class="grid">
+        <a class="card" href="projects.html">
+          <h3>projects/</h3>
+          <p class="muted">Things I've built and automated.</p>
+        </a>
+        <a class="card" href="knowledge-base.html">
+          <h3>knowledge-base/</h3>
+          <p class="muted">Admin procedures and runbooks for reference.</p>
+        </a>
+        <a class="card" href="resume.html">
+          <h3>resume.pdf<span class="badge">wip</span></h3>
+          <p class="muted">Being updated. Check back soon.</p>
+        </a>
+        <a class="card" href="about.html">
+          <h3>about.txt</h3>
+          <p class="muted">Background, focus areas, and how to reach me.</p>
+        </a>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="js/terminal.js"></script>
+</body>
+</html>

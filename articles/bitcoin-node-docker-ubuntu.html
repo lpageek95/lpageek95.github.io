@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Running a Bitcoin Full Node on Ubuntu with Bitcoin Core in Docker — Mario Paniagua</title>
+  <meta name="description" content="Run your own Bitcoin full node on Ubuntu: verify the Bitcoin Core release, package it in a Docker image, keep the blockchain on persistent storage, open port 8333 and monitor the sync with bitcoin-cli.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Running a Bitcoin Full Node on Ubuntu with Bitcoin Core in Docker">
+  <meta property="og:description" content="Run your own Bitcoin full node on Ubuntu: verify the Bitcoin Core release, package it in a Docker image, keep the blockchain on persistent storage, open port 8333 and monitor the sync with bitcoin-cli.">
+  <meta property="article:published_time" content="2026-10-19">
+  <meta property="article:section" content="Crypto">
+  <meta property="article:tag" content="bitcoin">
+  <meta property="article:tag" content="docker">
+  <meta property="article:tag" content="linux">
+  <meta property="article:tag" content="ubuntu">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / bitcoin-node-docker-ubuntu</p>
+
+      <article class="article prose">
+        <h1>Running a Bitcoin Full Node on Ubuntu with Bitcoin Core in Docker</h1>
+        <p class="article-meta"><span class="cat">Crypto</span> · <span class="level" data-level="intermediate"><span class="level-bars" aria-hidden="true">■■□</span> Intermediate</span> · <span class="reading-time">18 min read</span> · <span class="published">Published <time datetime="2026-10-19">Oct 19, 2026</time></span></p>
+        <ul class="tags"><li>bitcoin</li><li>docker</li><li>linux</li><li>ubuntu</li></ul>
+
+        <p class="lead">
+          How to run your own Bitcoin full node on an Ubuntu server: download and cryptographically
+          verify Bitcoin Core, package it in a small Docker image, keep the blockchain on persistent
+          storage, accept inbound peers on port 8333, and follow the sync with <code>bitcoin-cli</code>.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#how-it-works">How a Bitcoin node works</a></li>
+              <li><a href="#workflow">Setup workflow</a></li>
+              <li><a href="#reference">Commands and examples</a></li>
+              <li><a href="#output">Reading the output</a></li>
+              <li><a href="#common-problems">Common problems</a></li>
+              <li><a href="#tips">Troubleshooting tips</a></li>
+              <li><a href="#best-practices">Best practices</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <div class="callout">
+          <span class="callout-title">Convention used in this article</span>
+          <p>Blue code blocks labelled <strong>read-only</strong> only inspect the system and are safe to run.
+          Amber blocks labelled <strong>changes the system</strong> install software, write files or start services.
+          Read the explanation before running them.</p>
+        </div>
+
+        <div class="callout">
+          <span class="callout-title">Credit</span>
+          <p>Inspired by Red Fox Crypto's video
+          <a href="https://www.youtube.com/watch?v=hq4JjJo-2ec" rel="noopener">How to Run Your Own Bitcoin Node (Step-by-Step)</a>,
+          which installs Bitcoin Core by hand inside an Ubuntu container on a NAS. This guide follows the same
+          path (verify, install, persist, open 8333, auto-start) on a plain Ubuntu host, and bakes the install
+          into a Dockerfile so the container can be rebuilt or upgraded with one command.</p>
+        </div>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          A Bitcoin <strong>full node</strong> downloads every block since 2009 and checks every rule itself:
+          signatures, the 21 million coin limit, block sizes, double-spends. It doesn't trust miners, exchanges
+          or block explorers to tell it what's valid. If you hold bitcoin, your own node is the way to verify
+          your balance and transactions without asking someone else.
+        </p>
+        <p>
+          Running the node in Docker keeps the host clean: the Bitcoin Core binaries live in an image, the
+          blockchain lives in a directory on the host, and upgrading means rebuilding the image and recreating
+          the container. The blockchain data survives every rebuild.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>You want to verify Bitcoin yourself instead of trusting a third-party server.</li>
+          <li>You want a backend for your own wallet (Sparrow, Electrum via an Electrum server, a Lightning node) later on.</li>
+          <li>You want to help the network by serving blocks to other nodes.</li>
+          <li>You already run a home server or lab box with Docker and want to add a node to it.</li>
+          <li>You want a hands-on way to learn how Bitcoin works under the hood.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Resource</th><th>Minimum</th><th>Recommended</th></tr></thead>
+            <tbody>
+              <tr><td>OS</td><td>Ubuntu 22.04 LTS</td><td>Ubuntu 24.04 LTS, x86_64</td></tr>
+              <tr><td>Storage</td><td>~10 GB with pruning</td><td><strong>2 TB SSD</strong> for a full (unpruned) node. The chain is well over 700 GB in 2026 and keeps growing.</td></tr>
+              <tr><td>RAM</td><td>2 GB</td><td>8 GB or more (a bigger <code>dbcache</code> makes the first sync much faster)</td></tr>
+              <tr><td>CPU</td><td>2 cores</td><td>4+ cores</td></tr>
+              <tr><td>Network</td><td>Stable broadband</td><td>No tight data cap. The first sync downloads the whole chain, and a listening node can upload hundreds of GB per month.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <ul>
+          <li>Shell access with <code>sudo</code>.</li>
+          <li>Access to your router if you want inbound connections (port forwarding for TCP 8333).</li>
+          <li>Examples use Bitcoin Core <strong>31.1</strong>, the newest release at the time of writing. Check
+          <a href="https://bitcoincore.org/en/download/" rel="noopener">bitcoincore.org/en/download</a> and use the current
+          version everywhere you see <code>31.1</code>.</li>
+        </ul>
+        <div class="callout warn">
+          <span class="callout-title">Use an SSD</span>
+          <p>A node on a spinning disk works, but the initial sync can take weeks instead of a day or two because
+          validating blocks does a huge amount of random I/O. If the SSD is a second drive, mount it (for example at
+          <code>/srv</code>) before you start.</p>
+        </div>
+
+        <h2 id="how-it-works">How a Bitcoin node works</h2>
+        <p>A node does three jobs:</p>
+        <ul>
+          <li><strong>Historian.</strong> It stores the blockchain and serves old blocks to other nodes that are syncing.</li>
+          <li><strong>Enforcer.</strong> It validates every block and transaction against the consensus rules and rejects anything invalid, no matter who mined it.</li>
+          <li><strong>Mempool host.</strong> It keeps a pool of valid unconfirmed transactions and relays them to its peers.</li>
+        </ul>
+        <p>The pieces in this setup:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Piece</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td><code>bitcoind</code></td><td>The Bitcoin Core daemon. It talks to peers, validates and stores the chain.</td></tr>
+              <tr><td><code>bitcoin-cli</code></td><td>Command-line client that sends RPC calls to <code>bitcoind</code> on port 8332.</td></tr>
+              <tr><td>Port <strong>8333</strong></td><td>Peer-to-peer port. Published to the internet so other nodes can connect to you.</td></tr>
+              <tr><td>Port <strong>8332</strong></td><td>RPC port. <strong>Never</strong> exposed. In this setup it stays inside the container.</td></tr>
+              <tr><td><code>/srv/bitcoin</code></td><td>Data directory on the host, mounted into the container. Holds blocks, the chainstate (UTXO set), <code>bitcoin.conf</code> and <code>debug.log</code>.</td></tr>
+              <tr><td>Docker image</td><td>Ubuntu 24.04 plus the verified Bitcoin Core binaries, running as an unprivileged <code>bitcoin</code> user.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The first start triggers the <strong>initial block download (IBD)</strong>. The node fetches headers, then
+          every block, and validates them in order. Progress is reported as <code>verificationprogress</code>, a number
+          from 0 to 1. Until it gets close to 1 the node isn't fully in sync and shouldn't be relied on.
+        </p>
+
+        <h2 id="workflow">Setup workflow</h2>
+
+        <h3 id="step-1">1. Install Docker Engine</h3>
+        <p>Use Docker's own apt repository (the <code>docker.io</code> package in Ubuntu works too, but lags behind):</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg jq xxd
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/ubuntu $(. /etc/os-release &amp;&amp; echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list &gt; /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+
+# Optional: run docker without sudo (log out and back in afterwards)
+sudo usermod -aG docker "$USER"</code></pre>
+        <p><code>jq</code> and <code>xxd</code> are used later to read <code>bitcoin-cli</code> output.</p>
+        <div class="callout warn">
+          <span class="callout-title">Warning</span>
+          <p>Members of the <code>docker</code> group are effectively root on the host. Only add users you'd also give <code>sudo</code>.</p>
+        </div>
+        <pre data-label="read-only"><code class="language-bash">docker --version
+docker compose version
+docker run --rm hello-world</code></pre>
+
+        <h3 id="step-2">2. Download Bitcoin Core</h3>
+        <p>Work in a project directory. It becomes the Docker build context:</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">mkdir -p ~/bitcoin-node &amp;&amp; cd ~/bitcoin-node
+
+VERSION=31.1
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/bitcoin-${VERSION}-x86_64-linux-gnu.tar.gz
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/SHA256SUMS
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/SHA256SUMS.asc</code></pre>
+        <p>
+          The tarball is the program. <code>SHA256SUMS</code> lists the hash of every release file, and
+          <code>SHA256SUMS.asc</code> holds signatures over that list from Bitcoin Core's builders. On an ARM board
+          (Raspberry Pi 5 with a 64-bit OS) download <code>aarch64-linux-gnu</code> instead.
+        </p>
+
+        <h3 id="step-3">3. Verify the download: checksum and signatures</h3>
+        <p>
+          Don't skip this. You're about to run software that will guard money, and verification proves the file is
+          exactly what the Bitcoin Core developers built and signed, not something swapped on a mirror or in transit.
+        </p>
+        <p><strong>Checksum</strong>: is the file intact and listed in <code>SHA256SUMS</code>?</p>
+        <pre data-label="read-only"><code class="language-bash">sha256sum --ignore-missing --check SHA256SUMS</code></pre>
+        <pre class="output" data-label="output"><code class="language-text">bitcoin-31.1-x86_64-linux-gnu.tar.gz: OK</code></pre>
+        <p><strong>Signatures</strong>: was <code>SHA256SUMS</code> signed by the people who build Bitcoin Core? Import their public keys from the <code>guix.sigs</code> repository, then verify:</p>
+        <pre class="changes" data-label="changes the system: imports keys into your GPG keyring"><code class="language-bash">git clone --depth 1 https://github.com/bitcoin-core/guix.sigs
+gpg --import guix.sigs/builder-keys/*
+gpg --verify SHA256SUMS.asc SHA256SUMS</code></pre>
+        <p>
+          You want several lines of <code>Good signature from "..."</code>. See
+          <a href="#read-gpg">Reading the output</a> for what the warnings mean. A single
+          <code>BAD signature</code> means stop: delete the files and download again.
+        </p>
+
+        <h3 id="step-4">4. Prepare the data directory and bitcoin.conf</h3>
+        <p>
+          The blockchain must live <em>outside</em> the container so it survives rebuilds. The container runs as UID
+          <code>1001</code> (UID 1000 is already taken by the <code>ubuntu</code> user in the base image), so that UID
+          must own the directory:
+        </p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">sudo mkdir -p /srv/bitcoin
+sudo chown 1001:1001 /srv/bitcoin</code></pre>
+        <p>Create <code>/srv/bitcoin/bitcoin.conf</code> (for example with <code>sudo nano</code>):</p>
+        <pre class="changes" data-label="/srv/bitcoin/bitcoin.conf"><code class="language-ini"># Enable the RPC server so bitcoin-cli works (it stays inside the container)
+server=1
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+
+# Accept inbound peer connections on 8333
+listen=1
+
+# UTXO cache in MiB. A bigger value makes the first sync much faster.
+# About half your RAM during the sync; drop it to 450-1000 afterwards.
+dbcache=4096
+
+# Optional: limit upload to N MiB per 24h if your plan has a data cap
+#maxuploadtarget=5000
+
+# Optional: pruned node. Keeps only the last N MiB of blocks (minimum 550).
+# Still validates everything, but can't serve old blocks to peers.
+#prune=50000</code></pre>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">sudo chown 1001:1001 /srv/bitcoin/bitcoin.conf
+sudo chmod 600 /srv/bitcoin/bitcoin.conf</code></pre>
+        <p>
+          No RPC username or password is needed: <code>bitcoind</code> writes a random cookie to
+          <code>/srv/bitcoin/.cookie</code> at startup, and <code>bitcoin-cli</code> inside the container reads it automatically.
+        </p>
+
+        <h3 id="step-5">5. Write the Dockerfile</h3>
+        <p>In <code>~/bitcoin-node</code>, next to the verified tarball:</p>
+        <pre class="changes" data-label="~/bitcoin-node/Dockerfile"><code class="language-docker">FROM ubuntu:24.04
+
+ARG BITCOIN_VERSION=31.1
+ARG BITCOIN_UID=1001
+
+# The tarball was downloaded and verified on the host (steps 2-3)
+COPY bitcoin-${BITCOIN_VERSION}-x86_64-linux-gnu.tar.gz /tmp/bitcoin.tar.gz
+
+RUN tar -xzf /tmp/bitcoin.tar.gz -C /tmp \
+ &amp;&amp; install -m 0755 /tmp/bitcoin-${BITCOIN_VERSION}/bin/bitcoind \
+                    /tmp/bitcoin-${BITCOIN_VERSION}/bin/bitcoin-cli /usr/local/bin/ \
+ &amp;&amp; rm -rf /tmp/bitcoin.tar.gz /tmp/bitcoin-${BITCOIN_VERSION} \
+ &amp;&amp; useradd --create-home --uid ${BITCOIN_UID} bitcoin
+
+USER bitcoin
+VOLUME ["/home/bitcoin/.bitcoin"]
+EXPOSE 8333
+
+CMD ["bitcoind", "-printtoconsole"]</code></pre>
+        <p>
+          Copying the tarball you verified (instead of downloading inside the build) means the image contains exactly
+          the bytes you checked. The release binaries are self-contained, so the base image needs no extra packages.
+          <code>-printtoconsole</code> sends the log to <code>docker logs</code> as well as <code>debug.log</code>.
+        </p>
+
+        <h3 id="step-6">6. Write the Compose file</h3>
+        <pre class="changes" data-label="~/bitcoin-node/docker-compose.yml"><code class="language-yaml">services:
+  bitcoind:
+    build:
+      context: .
+      args:
+        BITCOIN_VERSION: "31.1"
+    image: local/bitcoind:31.1
+    container_name: bitcoind
+    restart: unless-stopped      # start on boot, restart after crashes
+    init: true                   # proper signal handling and zombie reaping
+    stop_grace_period: 10m       # give bitcoind time to flush its database
+    ports:
+      - "8333:8333"              # P2P only. Never publish 8332 (RPC).
+    volumes:
+      - /srv/bitcoin:/home/bitcoin/.bitcoin
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"</code></pre>
+        <p>
+          <code>stop_grace_period</code> matters: Docker's default is 10 seconds, after which it kills the process.
+          <code>bitcoind</code> often needs longer than that to write its cache to disk, and a hard kill during the sync
+          can force a long replay or even a reindex. <code>restart: unless-stopped</code> together with
+          <code>systemctl enable docker</code> is what brings the node back after a reboot.
+        </p>
+
+        <h3 id="step-7">7. Build and start the node</h3>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">cd ~/bitcoin-node
+docker compose up -d --build
+docker compose logs -f bitcoind      # Ctrl+C stops following, not the node</code></pre>
+        <p>Make <code>bitcoin-cli</code> convenient with an alias in <code>~/.bashrc</code>:</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">echo "alias btc='docker exec bitcoind bitcoin-cli'" &gt;&gt; ~/.bashrc
+source ~/.bashrc</code></pre>
+
+        <h3 id="step-8">8. Follow the sync</h3>
+        <pre data-label="read-only"><code class="language-bash">btc -getinfo                              # quick dashboard with a progress bar
+btc getblockchaininfo | jq '{blocks, headers, progress: (.verificationprogress * 100),
+                             ibd: .initialblockdownload, size_gb: (.size_on_disk / 1e9)}'
+du -sh /srv/bitcoin                       # disk used so far</code></pre>
+        <p>
+          The first few years of blocks fly by because they're small. Progress slows down a lot from around 2016 on,
+          when blocks got full. With an SSD, 8 GB of RAM and decent bandwidth, expect roughly one to two days; on a
+          Raspberry Pi or a hard disk, much longer.
+        </p>
+
+        <h3 id="step-9">9. Make the node reachable from the internet</h3>
+        <p>
+          Your node already works with outbound connections only: it validates everything and is fully useful to you.
+          Opening port 8333 lets other nodes connect to you too, which is how you help the network.
+        </p>
+        <ol>
+          <li>Give the server a fixed LAN IP (a DHCP reservation on the router is easiest).</li>
+          <li>On the router, forward <strong>TCP 8333</strong> to that IP.</li>
+          <li>Wait a while (new nodes get discovered gradually), then check:</li>
+        </ol>
+        <pre data-label="read-only"><code class="language-bash">btc getnetworkinfo | jq '{connections, connections_in, connections_out, localaddresses}'</code></pre>
+        <p>
+          <code>connections_in</code> above 0 means someone reached you. You can also enter your public IP and port 8333
+          in the "check node" tool on <a href="https://bitnodes.io/" rel="noopener">bitnodes.io</a>.
+        </p>
+        <div class="callout warn">
+          <span class="callout-title">Docker and ufw</span>
+          <p>Ports published by Docker bypass <code>ufw</code>: Docker writes its own iptables rules, so
+          <code>8333:8333</code> is open on every interface even if <code>ufw</code> says otherwise. That's fine for
+          8333, which is meant to be public. It's also why you must <strong>never</strong> add <code>8332:8332</code>
+          to the Compose file. Anyone who reaches the RPC port can control the node.</p>
+        </div>
+
+        <h3 id="step-10">10. Bonus: read Satoshi's message in the genesis block</h3>
+        <p>Block 0 contains a newspaper headline that Satoshi Nakamoto embedded in its coinbase transaction. Your own node can show it to you:</p>
+        <pre data-label="read-only"><code class="language-bash">btc getblockhash 0
+btc getblock "$(btc getblockhash 0)" 0 | xxd -r -p | strings</code></pre>
+        <p>
+          <code>getblock &lt;hash&gt; 0</code> returns the raw block as hex, <code>xxd -r -p</code> turns the hex back into
+          bytes, and <code>strings</code> prints the readable text.
+        </p>
+        <pre class="output" data-label="output"><code class="language-text">000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+EThe Times 03/Jan/2009 Chancellor on brink of second bailout for banks</code></pre>
+        <p>
+          The headline timestamps the block (it can't have been mined before that newspaper was printed) and hints at
+          why Bitcoin was created. The stray <code>E</code> is the length byte of the text in the script.
+        </p>
+
+        <h2 id="reference">Commands and examples</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Command</th><th>Purpose</th><th>Changes system?</th></tr></thead>
+            <tbody>
+              <tr><td><code>sha256sum --ignore-missing --check SHA256SUMS</code></td><td>Verify the tarball hash</td><td>No</td></tr>
+              <tr><td><code>gpg --verify SHA256SUMS.asc SHA256SUMS</code></td><td>Verify the builders' signatures</td><td>No</td></tr>
+              <tr><td><code>docker compose up -d --build</code></td><td>Build the image and start or recreate the node</td><td><strong>Yes</strong></td></tr>
+              <tr><td><code>docker compose logs -f bitcoind</code></td><td>Follow the node log</td><td>No</td></tr>
+              <tr><td><code>docker compose ps</code></td><td>Container status and restart count</td><td>No</td></tr>
+              <tr><td><code>docker compose stop</code></td><td>Stop the node cleanly (uses <code>stop_grace_period</code>)</td><td><strong>Yes</strong></td></tr>
+              <tr><td><code>btc -getinfo</code></td><td>Summary: blocks, progress, peers, version</td><td>No</td></tr>
+              <tr><td><code>btc getblockchaininfo</code></td><td>Sync state, chain size, pruning</td><td>No</td></tr>
+              <tr><td><code>btc getnetworkinfo</code></td><td>Peer counts in/out, local addresses</td><td>No</td></tr>
+              <tr><td><code>btc getpeerinfo | jq length</code></td><td>Number of connected peers</td><td>No</td></tr>
+              <tr><td><code>btc getmempoolinfo</code></td><td>Unconfirmed transactions held by your node</td><td>No</td></tr>
+              <tr><td><code>btc uptime</code></td><td>Seconds since <code>bitcoind</code> started</td><td>No</td></tr>
+              <tr><td><code>btc stop</code></td><td>Ask <code>bitcoind</code> to shut down (the container then restarts it)</td><td><strong>Yes</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Upgrading to a new Bitcoin Core release</h3>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">cd ~/bitcoin-node
+VERSION=31.2      # the new release
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/bitcoin-${VERSION}-x86_64-linux-gnu.tar.gz
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/SHA256SUMS
+curl -fLO https://bitcoincore.org/bin/bitcoin-core-${VERSION}/SHA256SUMS.asc
+git -C guix.sigs pull &amp;&amp; gpg --import guix.sigs/builder-keys/*
+sha256sum --ignore-missing --check SHA256SUMS &amp;&amp; gpg --verify SHA256SUMS.asc SHA256SUMS
+
+# Update BITCOIN_VERSION and the image tag in docker-compose.yml, then:
+docker compose up -d --build</code></pre>
+        <p>Compose stops the old container gracefully, starts the new one, and the node continues from the same data in <code>/srv/bitcoin</code>. Read the release notes first: major versions occasionally change defaults or config options.</p>
+
+        <h2 id="output">Reading the output</h2>
+
+        <h3 id="read-gpg">gpg --verify</h3>
+        <pre class="output" data-label="output"><code class="language-text">gpg: Signature made Wed 08 Jul 2026 ...
+gpg:                using RSA key 101598DC823C1B5F9A6624ABA5E0907A0380E6C3
+gpg: Good signature from "CoinForensics (SigningKey) &lt;...&gt;" [unknown]
+gpg: WARNING: This key is not certified with a trusted signature!
+gpg:          There is no indication that the signature belongs to the owner.
+gpg: Signature made Wed 08 Jul 2026 ...
+gpg: Good signature from "fanquake &lt;...&gt;" [unknown]
+...</code></pre>
+        <p>
+          <code>Good signature</code> is what matters: the file matches the key. The <code>WARNING</code> only says you
+          haven't personally certified those keys in your web of trust, which is normal. The more independent builders
+          that sign, the stronger the evidence. One or two <code>Can't check signature: No public key</code> lines are fine
+          (keys you didn't import); <code>BAD signature</code> is not.
+        </p>
+
+        <h3>docker compose logs during the sync</h3>
+        <pre class="output" data-label="output"><code class="language-text">bitcoind  | UpdateTip: new best=00000000000000000002a7c4... height=612403 version=0x20000000
+            log2_work=91.95 tx=488012350 date='2019-12-30T14:21:07Z' progress=0.392118 cache=3012.4MiB(21934117txo)
+bitcoind  | Synchronizing blockheaders, height: 920114 (~100.00%)</code></pre>
+        <p>
+          <code>height</code> is the block being validated, <code>date</code> is when that block was mined, and
+          <code>progress</code> is the same 0–1 value as <code>verificationprogress</code> (here 39%). <code>cache</code>
+          growing toward your <code>dbcache</code> is normal; when it fills, the node flushes it to disk and briefly slows down.
+        </p>
+
+        <h3>btc -getinfo</h3>
+        <pre class="output" data-label="output"><code class="language-text">Chain: main
+Blocks: 612403
+Headers: 920114
+Verification progress: ▒▒▒▒▒▒▒░░░░░░░░░░░░░ 39.2118%
+Difficulty: 15546745765549.48
+
+Network: in 0, out 10, total 10
+Version: 310100
+Time offset (s): 0
+Proxies: n/a
+Min tx relay fee rate (BTC/kvB): 0.00001000
+
+Warnings: (none)</code></pre>
+        <ul>
+          <li><strong>Blocks vs Headers</strong>: headers arrive first and are cheap; <code>Blocks</code> catches up as each one is validated. When they are equal and progress is ~100%, you're in sync.</li>
+          <li><strong>Network: in 0, out 10</strong>: 10 outbound peers is the default. <code>in 0</code> is expected until port 8333 is forwarded and other nodes find you.</li>
+          <li><strong>Version 310100</strong> = 31.1.0.</li>
+        </ul>
+
+        <h3>getblockchaininfo when fully synced</h3>
+        <pre class="output" data-label="output"><code class="language-text">{
+  "blocks": 920114,
+  "headers": 920114,
+  "progress": 99.99991,
+  "ibd": false,
+  "size_gb": 762.4
+}</code></pre>
+        <p><code>ibd: false</code> means the initial block download is finished. Progress rarely shows exactly 100 because it's an estimate based on time since the last block.</p>
+
+        <h2 id="common-problems">Common problems</h2>
+
+        <div class="scenario">
+          <h3 id="permissions">The container keeps restarting: permission errors on the data directory</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>docker compose ps</code> shows <code>Restarting</code>, and the log complains it can't create or write files under <code>/home/bitcoin/.bitcoin</code>.</dd>
+            <dt>Possible causes</dt>
+            <dd><code>/srv/bitcoin</code> or <code>bitcoin.conf</code> is owned by root (or UID 1000) instead of the container's UID 1001.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">docker compose logs --tail 30 bitcoind
+ls -lan /srv/bitcoin | head
+docker run --rm local/bitcoind:31.1 id      # shows the UID the image runs as</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+<pre class="changes" data-label="changes the system"><code class="language-bash">sudo chown -R 1001:1001 /srv/bitcoin
+docker compose up -d</code></pre>
+            </dd>
+            <dt>Verification</dt>
+            <dd>The status changes to <code>Up</code> and the log shows <code>UpdateTip</code> lines.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="rpc-errors">bitcoin-cli returns an error</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>
+<pre class="output" data-label="output"><code class="language-text">error code: -28
+error message:
+Loading block index…</code></pre>
+              <p>or <code>error: Could not connect to the server 127.0.0.1:8332</code>.</p>
+            </dd>
+            <dt>Possible causes</dt>
+            <dd>Code <code>-28</code> means <code>bitcoind</code> is still starting (loading the block index, verifying recent blocks) and is not an error: wait and retry. "Could not connect" means <code>bitcoind</code> isn't running, or <code>server=1</code> / the <code>rpcbind</code> lines are wrong in <code>bitcoin.conf</code>.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">docker compose ps
+docker compose logs --tail 50 bitcoind
+docker exec bitcoind cat /home/bitcoin/.bitcoin/bitcoin.conf</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Fix the config, then <code>docker compose restart bitcoind</code>. Run <code>bitcoin-cli</code> through <code>docker exec</code> as shown; running it on the host won't find the cookie or the RPC port.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="slow-sync">The initial sync is very slow</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>Progress moves a fraction of a percent per hour, especially past 2016-era blocks.</dd>
+            <dt>Possible causes</dt>
+            <dd>A hard disk or USB-attached disk, a small <code>dbcache</code>, too little RAM (the host is swapping), or slow bandwidth.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">free -h                               # swapping?
+iostat -x 5 3                         # %util near 100 on the data disk = I/O bound (package: sysstat)
+docker stats --no-stream bitcoind
+btc getblockchaininfo | jq '.verificationprogress'</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Raise <code>dbcache</code> as far as your free RAM allows during the sync, then lower it afterwards. Move <code>/srv/bitcoin</code> to an SSD if it's on a hard disk. Don't stop and start the node repeatedly: each clean stop flushes the cache, and the speed-up from a big cache is lost.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="no-inbound">No inbound connections</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>connections_in</code> stays at 0 after a day, and bitnodes.io reports the node as unreachable.</dd>
+            <dt>Possible causes</dt>
+            <dd>No port forward or a wrong target IP, the server's LAN IP changed, or your ISP uses carrier-grade NAT (your router's WAN IP is not your public IP), which blocks inbound connections entirely.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">docker compose port bitcoind 8333     # should print 0.0.0.0:8333
+sudo ss -tlnp | grep 8333             # is the host listening?
+ip -4 addr show                       # server's LAN IP: does the router forward to it?
+curl -4 https://ifconfig.me           # public IP: compare with the router's WAN IP</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Fix the forward or the DHCP reservation. If you're behind CGNAT, ask your ISP for a public IP, or accept an outbound-only node, which still fully validates and is completely fine for your own use.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="corruption">"Corrupted block database detected" after a crash or power loss</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd>The node won't start and the log says <code>Error: Corrupted block database detected</code> and suggests <code>-reindex</code> or <code>-reindex-chainstate</code>.</dd>
+            <dt>Possible causes</dt>
+            <dd>A power cut, an out-of-memory kill, or a container killed before <code>bitcoind</code> finished flushing (for example, the default 10-second stop timeout).</dd>
+            <dt>Resolution</dt>
+            <dd>
+              <p>Try the cheaper option first. Temporarily override the command, let it finish, then go back to the normal command:</p>
+<pre class="changes" data-label="changes the system: rebuilds the chainstate, takes hours"><code class="language-bash">docker compose run --rm --service-ports bitcoind bitcoind -printtoconsole -reindex-chainstate
+# If that fails, the full reindex (re-reads every block file from disk):
+docker compose run --rm --service-ports bitcoind bitcoind -printtoconsole -reindex</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p>Stop the normal container first (<code>docker compose stop</code>): two <code>bitcoind</code> processes can't use the same data directory. A reindex can take as long as the original sync. Prevent a repeat with <code>stop_grace_period</code>, enough RAM, and ideally a UPS.</p>
+              </div>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="disk-full">The disk fills up</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>bitcoind</code> shuts down with <code>Error: Disk space is too low!</code>, and the container restart-loops.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">df -h /srv
+sudo du -sh /srv/bitcoin/blocks /srv/bitcoin/chainstate /srv/bitcoin/indexes 2&gt;/dev/null
+docker system df</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Move <code>/srv/bitcoin</code> to a larger disk (stop the node, copy, update the volume path), or switch to a pruned node by adding <code>prune=</code> to <code>bitcoin.conf</code>. Pruning can't be combined with <code>txindex=1</code>, and turning pruning off again later means downloading the whole chain again. See the <a href="linux-disk-space-troubleshooting.html">Linux disk space guide</a> for finding other space consumers on the host.</dd>
+          </dl>
+        </div>
+
+        <h2 id="tips">Troubleshooting tips</h2>
+        <ul>
+          <li><code>debug.log</code> in <code>/srv/bitcoin</code> has more detail than <code>docker logs</code>, and survives container recreation: <code>sudo tail -f /srv/bitcoin/debug.log</code>.</li>
+          <li><code>btc help</code> lists every RPC, and <code>btc help getblockchaininfo</code> documents each field.</li>
+          <li><code>docker compose ps</code> shows a restart counter in the status column: a node that restarts every few minutes is failing at startup, so read the log from the top of the last start.</li>
+          <li>Clock matters. If <code>Time offset</code> in <code>-getinfo</code> is large, fix NTP on the host (<code>timedatectl status</code>).</li>
+          <li>To test the whole setup in minutes instead of days, run a throwaway copy on <code>signet</code> (add <code>-signet</code> and use a separate data directory).</li>
+        </ul>
+
+        <h2 id="best-practices">Best practices</h2>
+        <ul>
+          <li>Verify <strong>every</strong> release with both the checksum and the signatures before building the image.</li>
+          <li>Never publish the RPC port 8332. If another container needs RPC (a wallet server, a Lightning node), put both on a private Docker network and set <code>rpcallowip</code> to that network.</li>
+          <li>Run the node as an unprivileged user (UID 1001 here), never as root inside the container.</li>
+          <li>Keep the stop timeout long and the host on a UPS if you can. Unclean shutdowns are the main cause of reindexes.</li>
+          <li>Pin the version in the image tag (<code>local/bitcoind:31.1</code>) so you always know which release is running, and read the release notes before upgrading.</li>
+          <li>The blockchain doesn't need backups (it can always be downloaded again). Back up <code>bitcoin.conf</code>, and any wallet if you create one.</li>
+          <li>Keep the Ubuntu host patched (<code>unattended-upgrades</code>) and limit who can SSH in. The node is a long-running internet-facing service.</li>
+        </ul>
+
+        <h2 id="summary">Summary</h2>
+        <ol>
+          <li>Install Docker Engine and Compose on Ubuntu from Docker's repository.</li>
+          <li>Download Bitcoin Core, then verify it with <code>sha256sum --check</code> and <code>gpg --verify</code> against the builders' keys.</li>
+          <li>Create <code>/srv/bitcoin</code> (owned by UID 1001) with a <code>bitcoin.conf</code>.</li>
+          <li>Build an image from the verified tarball and run it with Compose: persistent volume, port 8333 published, RPC kept private, long stop timeout, <code>restart: unless-stopped</code>.</li>
+          <li>Follow the sync with <code>bitcoin-cli -getinfo</code> and <code>getblockchaininfo</code>, forward TCP 8333 on the router, and confirm inbound peers.</li>
+        </ol>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ini.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-docker.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>

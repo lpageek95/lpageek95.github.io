@@ -1,0 +1,14 @@
+# Local working notes / AI prompt files: kept on disk, never published to GitHub Pages.
+# (If this folder is ever committed by mistake, .gitignore alone won't unpublish it:
+#  run `git rm -r --cached kb-article-prompts-chatgpt/` and commit.)
+kb-article-prompts-chatgpt/
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+__pycache__/
+
+# Personal session notes
+latest-resume-command.txt

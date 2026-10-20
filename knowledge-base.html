@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knowledge Base: Linux, Kubernetes, OpenShift &amp; DNS Guides — Mario Paniagua</title>
+  <meta name="description" content="Practical troubleshooting guides and runbooks for Linux/RHEL, Kubernetes, OpenShift and DNS administrators. Searchable and filterable by category and topic.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Knowledge Base: Linux, Kubernetes, OpenShift &amp; DNS Guides">
+  <meta property="og:description" content="Practical troubleshooting guides and runbooks for Linux/RHEL, Kubernetes, OpenShift and DNS administrators.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="index.html">home</a></li>
+          <li><a href="projects.html">projects</a></li>
+          <li><a href="knowledge-base.html" aria-current="page">knowledge-base</a></li>
+          <li><a href="resume.html">resume</a></li>
+          <li><a href="about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <h1 class="prompt">ls ~/knowledge-base</h1>
+      <p class="muted">Procedures, troubleshooting guides and runbooks for Linux, Kubernetes and OpenShift administrators, plus self-hosting guides like running a Bitcoin node.</p>
+
+      <!-- Filled by js/knowledge-base.js from js/kb-articles.js -->
+      <section class="kb-stats" id="kb-stats" aria-label="Knowledge base statistics"></section>
+
+      <section class="kb-controls" id="kb-controls" aria-label="Search and filter articles" hidden>
+        <div class="kb-search">
+          <label for="kb-search" class="visually-hidden">Search the knowledge base</label>
+          <span class="kb-search-prompt" aria-hidden="true">$ grep -i</span>
+          <input id="kb-search" type="search" placeholder="Search the knowledge base..."
+                 autocomplete="off" autocapitalize="off" spellcheck="false"
+                 aria-describedby="kb-search-hint" aria-controls="kb-grid">
+        </div>
+        <p id="kb-search-hint" class="kb-hint">Matches titles, descriptions, categories, tags and technologies. <kbd>Esc</kbd> clears.</p>
+
+        <div class="kb-filters" id="kb-categories" role="group" aria-label="Filter by category"></div>
+
+        <div class="kb-status">
+          <p id="kb-count" class="kb-count" role="status" aria-live="polite"></p>
+          <p id="kb-active-tag" class="kb-active-tag" hidden>tag: <button type="button" id="kb-active-tag-btn" class="tag-btn" aria-pressed="true"></button></p>
+          <button type="button" id="kb-reset" class="kb-reset" hidden>reset filters</button>
+        </div>
+      </section>
+
+      <div class="grid" id="kb-grid"></div>
+
+      <div class="kb-empty" id="kb-empty" hidden>
+        <p id="kb-empty-text">No articles found matching your search.</p>
+        <button type="button" id="kb-empty-reset" class="kb-reset">reset filters</button>
+      </div>
+
+      <noscript>
+        <p class="muted">Search and filters need JavaScript. All articles:</p>
+        <ul>
+          <li><a href="articles/troubleshooting-pods-not-running.html">Troubleshooting Kubernetes / OpenShift Pods That Are Not Running</a></li>
+          <li><a href="articles/kubernetes-pod-scheduling.html">Kubernetes Taints, Tolerations, Node Selectors and Pod Scheduling</a></li>
+          <li><a href="articles/linux-disk-space-troubleshooting.html">Linux Disk Space Troubleshooting Guide</a></li>
+          <li><a href="articles/dns-troubleshooting-linux.html">DNS Troubleshooting on Linux</a></li>
+          <li><a href="articles/bitcoin-node-docker-ubuntu.html">Running a Bitcoin Full Node on Ubuntu with Bitcoin Core in Docker</a></li>
+        </ul>
+      </noscript>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="js/kb-articles.js"></script>
+  <script src="js/knowledge-base.js"></script>
+</body>
+</html>

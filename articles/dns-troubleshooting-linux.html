@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DNS Troubleshooting on Linux — Mario Paniagua</title>
+  <meta name="description" content="A practical DNS troubleshooting workflow for Linux administrators: resolver configuration, dig, getent, record types, NXDOMAIN/SERVFAIL/timeouts, caching and BIND checks.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="DNS Troubleshooting on Linux">
+  <meta property="og:description" content="A practical DNS troubleshooting workflow for Linux administrators: resolver configuration, dig, getent, record types, NXDOMAIN/SERVFAIL/timeouts, caching and BIND checks.">
+  <meta property="article:published_time" content="2026-09-29">
+  <meta property="article:section" content="DNS">
+  <meta property="article:tag" content="dns">
+  <meta property="article:tag" content="linux">
+  <meta property="article:tag" content="rhel">
+  <meta property="article:tag" content="troubleshooting">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / dns-troubleshooting-linux</p>
+
+      <article class="article prose">
+        <h1>DNS Troubleshooting on Linux</h1>
+        <p class="article-meta"><span class="cat">DNS</span> · <span class="level" data-level="intermediate"><span class="level-bars" aria-hidden="true">■■□</span> Intermediate</span> · <span class="reading-time">12 min read</span> · <span class="published">Published <time datetime="2026-09-29">Sep 29, 2026</time></span></p>
+        <ul class="tags"><li>dns</li><li>linux</li><li>rhel</li><li>troubleshooting</li></ul>
+
+        <p class="lead">
+          How name resolution actually works on a Linux host, how to tell a DNS server problem
+          from a client configuration problem, and a step-by-step workflow using
+          <code>getent</code>, <code>dig</code> and <code>resolvectl</code>.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#how-it-works">How resolution works on Linux</a></li>
+              <li><a href="#workflow">Troubleshooting workflow</a></li>
+              <li><a href="#reference">Commands and examples</a></li>
+              <li><a href="#output">Reading dig output</a></li>
+              <li><a href="#common-problems">Common problems</a></li>
+              <li><a href="#bind">BIND server checks</a></li>
+              <li><a href="#tips">Troubleshooting tips</a></li>
+              <li><a href="#best-practices">Best practices</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          "It's DNS" is often true, but "DNS" covers several layers: the application's resolver library,
+          <code>/etc/hosts</code>, a local caching stub, the configured recursive servers, and the
+          authoritative servers for the zone. Most wasted time comes from testing the wrong layer, for
+          example running <code>dig</code> (which bypasses the OS resolver) to debug an application that reads
+          <code>/etc/hosts</code>.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>An application reports <code>Name or service not known</code>, <code>Temporary failure in name resolution</code> or <code>UnknownHostException</code>.</li>
+          <li>A name resolves on one host but not another, or to different addresses.</li>
+          <li>A DNS change "isn't working yet".</li>
+          <li>Logins, SSH or Kerberos are slow (often reverse-lookup timeouts).</li>
+          <li>You're running or changing a BIND server.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li><code>dig</code>, <code>host</code> and <code>nslookup</code> come from <code>bind-utils</code> on RHEL (<code>dnf install bind-utils</code>).</li>
+          <li><code>resolvectl</code> only applies when <code>systemd-resolved</code> is running. It is the default on Fedora and Ubuntu, but not on RHEL.</li>
+          <li>Examples use documentation names and addresses (<code>example.com</code>, <code>192.0.2.0/24</code>, <code>10.0.0.0/8</code>).</li>
+        </ul>
+
+        <h2 id="how-it-works">How resolution works on Linux</h2>
+        <p>When a program calls <code>getaddrinfo()</code> (as <code>curl</code>, <code>ssh</code>, Java and Python do):</p>
+        <ol>
+          <li><strong><code>/etc/nsswitch.conf</code></strong> decides the order of sources. The <code>hosts:</code> line is typically <code>files dns myhostname</code>.</li>
+          <li><strong><code>files</code></strong> means <code>/etc/hosts</code>. A match here wins, and DNS is never asked.</li>
+          <li><strong><code>dns</code></strong> means the glibc stub resolver, configured by <code>/etc/resolv.conf</code>. It sends the query to a <code>nameserver</code>, which is either a recursive server on the network or a local stub such as <code>127.0.0.53</code> (systemd-resolved).</li>
+          <li>The <strong>recursive resolver</strong> answers from its cache or walks the hierarchy (root → <code>.com</code> → <code>example.com</code>'s authoritative servers) and caches the result for the record's TTL.</li>
+        </ol>
+
+        <h3 id="resolv-conf">/etc/resolv.conf</h3>
+        <pre data-label="/etc/resolv.conf"><code class="language-ini"># Generated by NetworkManager
+search corp.example.com example.com
+nameserver 10.0.0.53
+nameserver 10.0.1.53
+options timeout:2 attempts:2</code></pre>
+        <ul>
+          <li><strong><code>nameserver</code></strong>: up to 3 are used, tried in order. The second is only tried after the first times out, so a dead first server makes every lookup slow rather than failing.</li>
+          <li><strong><code>search</code></strong>: suffixes appended to short names. <code>getent hosts db01</code> tries <code>db01.corp.example.com</code>, then <code>db01.example.com</code>.</li>
+          <li><strong><code>options ndots:n</code></strong>: names with fewer than <em>n</em> dots are tried with the search suffixes first (default 1). Kubernetes pods use <code>ndots:5</code>, which is why external lookups from pods can generate several NXDOMAIN queries first.</li>
+        </ul>
+        <div class="callout">
+          <span class="callout-title">Who owns resolv.conf?</span>
+          <p>On RHEL, <strong>NetworkManager</strong> writes <code>/etc/resolv.conf</code>. Manual edits are overwritten on the next
+          connection change. If it is a symlink to <code>/run/systemd/resolve/stub-resolv.conf</code>, systemd-resolved owns
+          it. Check with <code>ls -l /etc/resolv.conf</code> before editing anything.</p>
+        </div>
+
+        <h3 id="records">Record types you'll troubleshoot</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Type</th><th>Maps</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td><code>A</code></td><td>name → IPv4</td><td>Most common lookup</td></tr>
+              <tr><td><code>AAAA</code></td><td>name → IPv6</td><td>If AAAA exists but IPv6 is broken, clients may try IPv6 first and hang</td></tr>
+              <tr><td><code>CNAME</code></td><td>alias → canonical name</td><td>Can't coexist with other records at the same name (so not at a zone apex)</td></tr>
+              <tr><td><code>MX</code></td><td>domain → mail servers</td><td>Must point to a name with A/AAAA, not to a CNAME or an IP</td></tr>
+              <tr><td><code>NS</code></td><td>zone → authoritative servers</td><td>Delegation. Mismatches between parent and child cause intermittent failures</td></tr>
+              <tr><td><code>PTR</code></td><td>IP → name (reverse)</td><td>Lives in <code>in-addr.arpa</code> / <code>ip6.arpa</code>, usually managed by whoever owns the IP range</td></tr>
+              <tr><td><code>SOA</code></td><td>zone metadata</td><td>Serial number, refresh timers, negative-cache TTL</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="workflow">Troubleshooting workflow</h2>
+
+        <h3 id="step-1">1. Reproduce the failure the way the application sees it</h3>
+        <pre data-label="read-only"><code class="language-bash">getent hosts app.example.com     # uses nsswitch: /etc/hosts, then DNS, with search domains
+getent ahosts app.example.com    # getaddrinfo(), shows every returned address (IPv4 and IPv6)</code></pre>
+        <p>
+          If <code>getent</code> works, name resolution on this host works, and the problem is elsewhere
+          (application cache, proxy, firewall). If it fails, continue.
+        </p>
+
+        <h3 id="step-2">2. Check local overrides and resolver configuration</h3>
+        <pre data-label="read-only"><code class="language-bash">grep -v '^#' /etc/hosts
+grep '^hosts:' /etc/nsswitch.conf
+ls -l /etc/resolv.conf &amp;&amp; cat /etc/resolv.conf
+nmcli device show | grep -i dns          # what NetworkManager thinks the DNS servers are
+resolvectl status                        # only if systemd-resolved is in use</code></pre>
+        <p>Look for stale <code>/etc/hosts</code> entries, missing or wrong <code>nameserver</code> lines, and a wrong <code>search</code> list.</p>
+
+        <h3 id="step-3">3. Query the configured server directly</h3>
+        <pre data-label="read-only"><code class="language-bash">dig app.example.com                      # uses the first nameserver in resolv.conf
+dig @10.0.0.53 app.example.com A         # ask a specific server
+dig @10.0.1.53 app.example.com A         # ...and the second one: do they agree?</code></pre>
+        <p>
+          <code>dig</code> talks DNS directly. It ignores <code>/etc/hosts</code> and nsswitch, and does not use
+          the <code>search</code> list unless you add <code>+search</code>. Always query the fully qualified name.
+        </p>
+
+        <h3 id="step-4">4. Compare with an independent resolver and the authoritative servers</h3>
+        <pre data-label="read-only"><code class="language-bash">dig @8.8.8.8 example.com                 # public resolver (only if the host has outbound DNS)
+dig example.com NS +short                # which servers are authoritative?
+dig @ns1.example.com app.example.com +norecurse   # ask the authority directly, no cache involved
+dig app.example.com +trace               # follow delegation from the root</code></pre>
+        <p>
+          If the authoritative server has the right answer but your recursive server doesn't, the issue is
+          caching or forwarding on the recursive side. If the authoritative answer is wrong, the zone data is wrong.
+        </p>
+
+        <h3 id="step-5">5. Rule out the network path</h3>
+        <pre data-label="read-only"><code class="language-bash">dig @10.0.0.53 app.example.com +tcp      # does TCP/53 work where UDP/53 fails?
+sudo tcpdump -ni any port 53             # are queries leaving and replies coming back?</code></pre>
+        <p>
+          DNS uses UDP/53 and falls back to TCP/53 for large responses (DNSSEC, many records).
+          Firewalls that only allow UDP cause truncated or failed large answers.
+        </p>
+
+        <h3 id="step-6">6. Consider caches</h3>
+        <p>
+          Every layer may cache: the application (for example, the JVM), <code>nscd</code>/<code>sssd</code>,
+          systemd-resolved, the recursive server, and even upstream forwarders. After a record change, old
+          answers can persist for up to the old TTL. Failed lookups (NXDOMAIN) are cached too, for the
+          SOA's negative TTL.
+        </p>
+
+        <h2 id="reference">Commands and examples</h2>
+        <pre data-label="read-only"><code class="language-bash">dig example.com                 # default query: A record, full output
+dig @8.8.8.8 example.com        # query a specific server
+dig example.com A               # IPv4 address
+dig example.com AAAA            # IPv6 address
+dig example.com MX              # mail servers
+dig example.com NS              # authoritative name servers
+dig example.com SOA +short      # serial and timers
+dig -x 192.0.2.10               # reverse (PTR) lookup
+dig example.com +short          # answer only, handy in scripts
+host app.example.com            # quick lookup (uses the search list)
+nslookup app.example.com 10.0.0.53
+resolvectl query app.example.com
+ping -c1 app.example.com        # resolves via getaddrinfo, but ICMP may be blocked</code></pre>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tool</th><th>Uses /etc/hosts &amp; nsswitch?</th><th>Uses search list?</th><th>Best for</th></tr></thead>
+            <tbody>
+              <tr><td><code>getent hosts</code></td><td>Yes</td><td>Yes</td><td>What applications actually get</td></tr>
+              <tr><td><code>dig</code></td><td>No</td><td>No (unless <code>+search</code>)</td><td>Precise DNS protocol testing</td></tr>
+              <tr><td><code>host</code> / <code>nslookup</code></td><td>No</td><td>Yes</td><td>Quick checks</td></tr>
+              <tr><td><code>resolvectl query</code></td><td>Via resolved</td><td>Yes</td><td>Hosts using systemd-resolved</td></tr>
+              <tr><td><code>ping</code></td><td>Yes</td><td>Yes</td><td>Confirms resolution only. A ping failure isn't a DNS failure</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="output">Reading dig output</h2>
+        <pre class="output" data-label="output"><code class="language-text">; &lt;&lt;&gt;&gt; DiG 9.16.23-RH &lt;&lt;&gt;&gt; app.example.com
+;; global options: +cmd
+;; Got answer:
+;; -&gt;&gt;HEADER&lt;&lt;- opcode: QUERY, status: NOERROR, id: 40217
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1
+
+;; QUESTION SECTION:
+;app.example.com.               IN      A
+
+;; ANSWER SECTION:
+app.example.com.        300     IN      CNAME   web01.example.com.
+web01.example.com.      300     IN      A       192.0.2.10
+
+;; Query time: 3 msec
+;; SERVER: 10.0.0.53#53(10.0.0.53)
+;; WHEN: Tue Sep 29 09:12:44 UTC 2026
+;; MSG SIZE  rcvd: 82</code></pre>
+        <ul>
+          <li><strong><code>status</code></strong>: the result code (see the table below). This is the first thing to read.</li>
+          <li><strong><code>flags</code></strong>: <code>qr</code> is a response, <code>rd</code> means recursion desired, and <code>ra</code> means recursion available (the server is a recursive resolver). <code>aa</code> (authoritative answer) appears when you query the zone's own server.</li>
+          <li><strong>ANSWER</strong>: <code>app</code> is a CNAME pointing to <code>web01</code>, which has the A record. The number (<code>300</code>) is the remaining TTL in seconds. From a cache, it counts down.</li>
+          <li><strong><code>SERVER</code></strong>: which server answered. Confirm it's the one you meant to test.</li>
+          <li><strong><code>Query time</code></strong>: 0–5 ms usually means a cached answer, and hundreds of ms means a full recursive lookup.</li>
+        </ul>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Result</th><th>Meaning</th><th>Usual cause</th></tr></thead>
+            <tbody>
+              <tr><td><code>NOERROR</code> + answer</td><td>Success</td><td>Check whether the address is the <em>expected</em> one</td></tr>
+              <tr><td><code>NOERROR</code>, <code>ANSWER: 0</code></td><td>Name exists, but has no record of this type ("NODATA")</td><td>For example, asking for AAAA when only A exists</td></tr>
+              <tr><td><code>NXDOMAIN</code></td><td>Name does not exist</td><td>Typo, missing record, wrong zone, wrong search suffix, or a cached negative answer</td></tr>
+              <tr><td><code>SERVFAIL</code></td><td>The server couldn't produce an answer</td><td>DNSSEC validation failure, authoritative servers unreachable, broken delegation, zone failed to load</td></tr>
+              <tr><td><code>REFUSED</code></td><td>The server won't answer you</td><td>ACL (<code>allow-query</code>/<code>allow-recursion</code>), or asking an authoritative-only server for another domain</td></tr>
+              <tr><td><code>connection timed out; no servers could be reached</code></td><td>No response at all</td><td>Server down, wrong IP, firewall blocking 53/udp</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="common-problems">Common problems</h2>
+
+        <div class="scenario">
+          <h3>dig works, the application doesn't</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>dig app.example.com</code> returns the right address, but the application connects to the wrong host or fails to resolve.</dd>
+            <dt>Possible causes</dt>
+            <dd>A stale <code>/etc/hosts</code> entry, a different nsswitch order, a short name being expanded with the wrong search suffix, or the application's own DNS cache.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">getent ahosts app.example.com
+grep -i app /etc/hosts
+getent hosts app            # short name: which suffix wins?</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Remove the stale hosts entry, use fully qualified names in configuration, or restart the application to clear its cache (Java: check <code>networkaddress.cache.ttl</code>).</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>Every lookup is slow (seconds), but eventually works</h3>
+          <dl>
+            <dt>Cause</dt>
+            <dd>The first <code>nameserver</code> in <code>/etc/resolv.conf</code> is unreachable, so every query waits for the timeout (5s by default) before trying the next one. Another cause is AAAA lookups timing out on a network without working IPv6 DNS.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">for ns in $(awk '/^nameserver/{print $2}' /etc/resolv.conf); do
+  echo "== $ns"; dig @"$ns" example.com +short +time=2 +tries=1
+done</code></pre>
+            </dd>
+            <dt>Resolution (NetworkManager)</dt>
+            <dd>
+<pre class="changes" data-label="changes the system: may briefly interrupt networking"><code class="language-bash">sudo nmcli connection modify eth0 ipv4.dns "10.0.0.53 10.0.1.53" ipv4.ignore-auto-dns yes
+sudo nmcli connection up eth0</code></pre>
+              <p>Bringing a connection up again over SSH can drop your session if the change is wrong. Have console access for remote hosts.</p>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>DNS change "not visible yet"</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">dig @ns1.example.com app.example.com +norecurse   # authoritative: is the new value there?
+dig @ns2.example.com app.example.com +norecurse   # all authoritative servers agree?
+dig example.com SOA +short                        # serial number, then compare across servers
+dig @10.0.0.53 app.example.com                    # recursive: TTL still counting down on the old answer?</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+              If the authoritative servers disagree, zone transfer or serial increment failed (see <a href="#bind">BIND checks</a>).
+              If only the recursive server is stale, wait out the TTL or flush it:
+<pre class="changes" data-label="changes the system: clears cached entries"><code class="language-bash">sudo rndc flushname app.example.com     # BIND recursive server
+sudo resolvectl flush-caches            # systemd-resolved on the client</code></pre>
+              <p>Before a planned change, lower the record's TTL in advance (at least one old-TTL period before the change).</p>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>SERVFAIL for one domain</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">dig broken.example.net                  # SERVFAIL
+dig broken.example.net +cd              # +cd = checking disabled (skip DNSSEC validation)
+dig broken.example.net +trace</code></pre>
+            </dd>
+            <dt>Interpretation</dt>
+            <dd>If <code>+cd</code> returns an answer but a normal query returns SERVFAIL, DNSSEC validation is failing (expired signatures, broken DS record). That is the zone owner's problem to fix. Don't disable validation globally. If <code>+trace</code> stalls at one delegation, those authoritative servers are unreachable or misconfigured.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>Slow SSH logins / missing reverse DNS</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">dig -x 192.0.2.25 +short                 # PTR for the client's IP
+dig $(dig -x 192.0.2.25 +short) +short   # forward-confirm: does the name map back to the IP?</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Add the correct PTR record in the reverse zone (for example <code>2.0.192.in-addr.arpa</code>), or fix the reverse-zone server that is timing out. Kerberos, some mail servers and TLS setups depend on forward and reverse DNS matching.</dd>
+          </dl>
+        </div>
+
+        <h2 id="bind">BIND server checks</h2>
+        <p>On a BIND (<code>named</code>) server on RHEL, check configuration and zone syntax before every reload:</p>
+        <pre data-label="read-only"><code class="language-bash">sudo named-checkconf                         # syntax of /etc/named.conf
+sudo named-checkconf -z                      # ...and load every zone it references
+sudo named-checkzone example.com /var/named/example.com.zone
+sudo named-checkzone 2.0.192.in-addr.arpa /var/named/192.0.2.rev
+sudo rndc status
+sudo journalctl -u named --since "30 min ago"</code></pre>
+        <pre class="output" data-label="output"><code class="language-text">zone example.com/IN: loaded serial 2026092901
+OK</code></pre>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">sudo rndc reload example.com                 # reload one zone after editing it</code></pre>
+        <p>Frequent BIND mistakes:</p>
+        <ul>
+          <li><strong>Serial not incremented.</strong> Secondaries never pick up the change. The <code>YYYYMMDDnn</code> format makes this easy to get right.</li>
+          <li><strong>Missing trailing dot.</strong> <code>web01.example.com</code> without a dot inside the <code>example.com</code> zone becomes <code>web01.example.com.example.com.</code></li>
+          <li><strong>CNAME at the apex or next to other records</strong> at the same name.</li>
+          <li><strong>ACLs:</strong> clients get <code>REFUSED</code> because <code>allow-query</code> or <code>allow-recursion</code> does not include their subnet.</li>
+          <li><strong>SELinux / permissions:</strong> zone files copied in with the wrong context fail to load. <code>ls -Z /var/named</code> shows the context, and <code>restorecon -Rv /var/named</code> (which <em>changes the system</em>) restores the defaults.</li>
+        </ul>
+
+        <h2 id="tips">Troubleshooting tips</h2>
+        <ul>
+          <li>Always test with the <strong>fully qualified name and a trailing dot</strong> (<code>app.example.com.</code>) to take search domains out of the picture.</li>
+          <li>Test <strong>each</strong> configured nameserver separately. Split-brain answers between two resolvers produce "intermittent" issues.</li>
+          <li>Record the <code>SERVER</code> line and TTL in tickets. They show which resolver and how stale the answer was.</li>
+          <li>In containers and pods, check the pod's own <code>/etc/resolv.conf</code> (<code>kubectl exec &lt;pod&gt; -- cat /etc/resolv.conf</code>). Cluster DNS (CoreDNS, which on OpenShift runs in the <code>openshift-dns</code> namespace) is a separate layer from the node's resolver.</li>
+          <li><code>ping</code> failing doesn't mean DNS is failing. Check whether ping printed a resolved IP before timing out.</li>
+        </ul>
+
+        <h2 id="best-practices">Best practices</h2>
+        <ul>
+          <li>Configure at least two resolvers, in different failure domains, and monitor both.</li>
+          <li>Manage client DNS through NetworkManager (or your config management), not by hand-editing <code>/etc/resolv.conf</code>.</li>
+          <li>Keep <code>/etc/hosts</code> minimal and documented. Hidden overrides are a classic cause of "works here, not there".</li>
+          <li>Use fully qualified names in application configs.</li>
+          <li>Lower TTLs before migrations, and restore them afterwards.</li>
+          <li>Run <code>named-checkconf -z</code> and <code>named-checkzone</code> in change procedures or CI before any reload.</li>
+          <li>Maintain PTR records for servers. Many tools and logs rely on them.</li>
+        </ul>
+
+        <h2 id="summary">Summary</h2>
+        <ol>
+          <li><code>getent ahosts</code>: reproduce what the application sees.</li>
+          <li><code>/etc/hosts</code>, <code>nsswitch.conf</code>, <code>resolv.conf</code>: check the local configuration.</li>
+          <li><code>dig @server name</code>: test each configured resolver with the FQDN.</li>
+          <li><code>dig +norecurse</code> / <code>+trace</code>: compare with the authoritative source.</li>
+          <li>Check the network (<code>+tcp</code>, <code>tcpdump</code>) and every cache layer.</li>
+          <li>Read <code>status</code> first: NXDOMAIN, SERVFAIL, REFUSED and timeouts each point to a different layer.</li>
+        </ol>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ini.min.js"></script>
+</body>
+</html>

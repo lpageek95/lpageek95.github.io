@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kubernetes Taints, Tolerations, Node Selectors and Pod Scheduling — Mario Paniagua</title>
+  <meta name="description" content="How the Kubernetes scheduler places pods: nodeSelector, node affinity, pod anti-affinity, taints and tolerations, OpenShift infra nodes, and how to read FailedScheduling events.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Kubernetes Taints, Tolerations, Node Selectors and Pod Scheduling">
+  <meta property="og:description" content="How the Kubernetes scheduler places pods: nodeSelector, node affinity, pod anti-affinity, taints and tolerations, OpenShift infra nodes, and how to read FailedScheduling events.">
+  <meta property="article:published_time" content="2026-09-29">
+  <meta property="article:section" content="Kubernetes">
+  <meta property="article:tag" content="kubernetes">
+  <meta property="article:tag" content="openshift">
+  <meta property="article:tag" content="system administration">
+  <meta property="article:tag" content="troubleshooting">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / kubernetes-pod-scheduling</p>
+
+      <article class="article prose">
+        <h1>Kubernetes Taints, Tolerations, Node Selectors and Pod Scheduling</h1>
+        <p class="article-meta"><span class="cat">Kubernetes</span> · <span class="level" data-level="advanced"><span class="level-bars" aria-hidden="true">■■■</span> Advanced</span> · <span class="reading-time">11 min read</span> · <span class="published">Published <time datetime="2026-09-29">Sep 29, 2026</time></span></p>
+        <ul class="tags"><li>kubernetes</li><li>openshift</li><li>system administration</li><li>troubleshooting</li></ul>
+
+        <p class="lead">
+          How the scheduler decides where a pod runs, how to steer pods towards nodes (selectors, affinity)
+          and keep them away (taints, anti-affinity), how to dedicate OpenShift infra nodes, and how to decode
+          <code>0/6 nodes are available</code>.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#how-it-works">How the scheduler works</a></li>
+              <li><a href="#attract">Attracting pods: nodeSelector and node affinity</a></li>
+              <li><a href="#spread">Pod affinity and anti-affinity</a></li>
+              <li><a href="#taints">Repelling pods: taints and tolerations</a></li>
+              <li><a href="#openshift-infra">Example: dedicated OpenShift infra nodes</a></li>
+              <li><a href="#workflow">Troubleshooting workflow</a></li>
+              <li><a href="#scheduling-errors">Reading FailedScheduling messages</a></li>
+              <li><a href="#common-problems">Common problems</a></li>
+              <li><a href="#tips">Troubleshooting tips</a></li>
+              <li><a href="#best-practices">Best practices</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          Placement rules come in two directions. <strong>Selectors and affinity</strong> are set on the
+          <em>pod</em> and say "run me on nodes like this". <strong>Taints</strong> are set on the <em>node</em> and
+          say "keep pods off me unless they explicitly tolerate this". Most scheduling surprises come from
+          mixing the two up, especially from expecting a toleration to attract a pod to a node. It doesn't.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>Pods are stuck in <code>Pending</code> with a <code>FailedScheduling</code> event.</li>
+          <li>Dedicating nodes to a workload class: infra, GPU, databases, a specific team.</li>
+          <li>Spreading replicas across nodes or zones for availability.</li>
+          <li>Moving OpenShift router, registry or monitoring components to infra nodes.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li><code>kubectl</code> or <code>oc</code> access. Labelling and tainting nodes requires cluster-admin-level permissions.</li>
+          <li>A basic understanding of Deployments, labels and <a href="troubleshooting-pods-not-running.html">pod status</a>.</li>
+        </ul>
+
+        <h2 id="how-it-works">How the scheduler works</h2>
+        <p>
+          The scheduler (<code>kube-scheduler</code>, which on OpenShift runs in <code>openshift-kube-scheduler</code>) watches
+          for pods with no <code>spec.nodeName</code>. For each one:
+        </p>
+        <ol>
+          <li><strong>Filter:</strong> discard nodes that can't run the pod: not enough allocatable CPU/memory for the pod's
+              <em>requests</em>, untolerated taints, non-matching selectors or required affinity, volume topology
+              conflicts, host port conflicts, unschedulable (cordoned) nodes.</li>
+          <li><strong>Score:</strong> rank the remaining nodes (preferred affinity, spreading, resource balance, image locality).</li>
+          <li><strong>Bind:</strong> write the chosen node into <code>spec.nodeName</code>. The kubelet on that node starts the pod.</li>
+        </ol>
+        <p>
+          If filtering leaves zero nodes, the pod stays <code>Pending</code>, and the scheduler records <em>why</em> each node
+          was rejected in a <code>FailedScheduling</code> event. It then tries <strong>preemption</strong>: evicting lower-priority pods
+          to make room, if the pod has a higher PriorityClass.
+        </p>
+        <div class="callout">
+          <span class="callout-title">Scheduling uses requests, not usage</span>
+          <p>A node at 15% actual CPU can reject a pod with <code>Insufficient cpu</code> if the sum of <em>requests</em> on
+          it is close to allocatable. Check <code>kubectl describe node</code> → <code>Allocated resources</code>.</p>
+        </div>
+
+        <h2 id="attract">Attracting pods: nodeSelector and node affinity</h2>
+
+        <h3>Labels</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get nodes --show-labels
+kubectl get nodes -L disktype,topology.kubernetes.io/zone    # show chosen labels as columns</code></pre>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">kubectl label node worker03 disktype=ssd
+kubectl label node worker03 disktype-           # remove the label</code></pre>
+
+        <h3>nodeSelector</h3>
+        <p>The simplest rule: the node must have <em>all</em> of these labels, with these exact values.</p>
+        <pre data-label="yaml"><code class="language-yaml">apiVersion: v1
+kind: Pod
+metadata:
+  name: pg-bench
+spec:
+  nodeSelector:
+    disktype: ssd
+  containers:
+  - name: bench
+    image: registry.example.com/tools/pgbench:16</code></pre>
+
+        <h3>Node affinity</h3>
+        <p>Node affinity adds operators (<code>In</code>, <code>NotIn</code>, <code>Exists</code>, <code>DoesNotExist</code>, <code>Gt</code>, <code>Lt</code>) and soft preferences:</p>
+        <pre data-label="yaml"><code class="language-yaml">spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:                    # expressions in one term are ANDed
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values: ["eu-west-1a", "eu-west-1b"]
+          - key: node-role.kubernetes.io/infra
+            operator: DoesNotExist
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 80                             # 1-100, added to the node's score
+        preference:
+          matchExpressions:
+          - key: disktype
+            operator: In
+            values: ["ssd"]</code></pre>
+        <ul>
+          <li><strong><code>required...</code></strong> is a hard filter. Multiple <code>nodeSelectorTerms</code> are ORed.</li>
+          <li><strong><code>preferred...</code></strong> only influences scoring. The pod still runs elsewhere if no node matches.</li>
+          <li><strong><code>IgnoredDuringExecution</code></strong>: changing node labels later does <em>not</em> evict running pods.</li>
+        </ul>
+
+        <h2 id="spread">Pod affinity and anti-affinity</h2>
+        <p>
+          These rules place pods relative to <em>other pods</em>, within a topology domain defined by a node label
+          (<code>kubernetes.io/hostname</code> = per node, <code>topology.kubernetes.io/zone</code> = per zone).
+          A common use is keeping replicas of the same app on different nodes:
+        </p>
+        <pre data-label="yaml"><code class="language-yaml">apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app: web }
+      containers:
+      - name: web
+        image: registry.example.com/team/web:2.3</code></pre>
+        <p>
+          Use <code>preferred</code> unless you truly need a hard guarantee. With <code>required</code> anti-affinity and
+          <code>replicas</code> greater than the number of eligible nodes, the extra replicas stay <code>Pending</code> forever. For
+          even spreading, <code>topologySpreadConstraints</code> is usually a better tool than anti-affinity.
+        </p>
+
+        <h2 id="taints">Repelling pods: taints and tolerations</h2>
+        <p>A taint has the form <code>key=value:effect</code>:</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">kubectl taint nodes worker01 dedicated=infra:NoSchedule
+
+# Remove it again (note the trailing dash)
+kubectl taint nodes worker01 dedicated=infra:NoSchedule-</code></pre>
+        <pre data-label="read-only"><code class="language-bash">kubectl describe node worker01 | grep -A3 Taints
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Effect</th><th>New pods without a toleration</th><th>Running pods without a toleration</th></tr></thead>
+            <tbody>
+              <tr><td><code>NoSchedule</code></td><td>Not scheduled</td><td>Keep running</td></tr>
+              <tr><td><code>PreferNoSchedule</code></td><td>Avoided if possible (soft)</td><td>Keep running</td></tr>
+              <tr><td><code>NoExecute</code></td><td>Not scheduled</td><td><strong>Evicted</strong> (after <code>tolerationSeconds</code>, if set)</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Tolerating the taint</h3>
+        <pre data-label="yaml"><code class="language-yaml">spec:
+  tolerations:
+  - key: dedicated
+    operator: Equal        # key, value and effect must match the taint
+    value: infra
+    effect: NoSchedule
+  # operator: Exists matches any value for the key:
+  # - key: dedicated
+  #   operator: Exists
+  #   effect: NoSchedule</code></pre>
+        <div class="callout warn">
+          <span class="callout-title">A toleration only permits, it doesn't attract</span>
+          <p>The pod above <em>may</em> run on <code>worker01</code>, but the scheduler is just as happy to put it on any untainted
+          node. To <strong>dedicate</strong> nodes, combine a taint (keep others off) with a label and a
+          <code>nodeSelector</code>/affinity (pull these pods on). Also avoid a bare <code>operator: Exists</code> with no key.
+          That tolerates <em>every</em> taint, including control-plane and <code>NoExecute</code> node-problem taints.</p>
+        </div>
+
+        <h3>Taints Kubernetes adds by itself</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Taint</th><th>Added when</th></tr></thead>
+            <tbody>
+              <tr><td><code>node.kubernetes.io/not-ready:NoExecute</code></td><td>Node <code>Ready</code> condition is False</td></tr>
+              <tr><td><code>node.kubernetes.io/unreachable:NoExecute</code></td><td>Node controller lost contact with the node</td></tr>
+              <tr><td><code>node.kubernetes.io/unschedulable:NoSchedule</code></td><td>Node was cordoned (<code>kubectl cordon</code> / drain)</td></tr>
+              <tr><td><code>node.kubernetes.io/memory-pressure</code>, <code>disk-pressure</code>, <code>pid-pressure</code></td><td>Kubelet reports resource pressure</td></tr>
+              <tr><td><code>node-role.kubernetes.io/master:NoSchedule</code> / <code>control-plane:NoSchedule</code></td><td>Control plane nodes (OpenShift and kubeadm clusters)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Pods get default tolerations for <code>not-ready</code> and <code>unreachable</code> with
+          <code>tolerationSeconds: 300</code>. That's why pods on a failed node are only evicted after about 5 minutes.
+        </p>
+
+        <h2 id="openshift-infra">Example: dedicated OpenShift infra nodes</h2>
+        <p>
+          On OpenShift, cluster components such as the ingress router, the internal image registry and the monitoring stack
+          can be moved to <strong>infra nodes</strong>. This keeps them away from application workloads (and, per Red Hat's
+          subscription terms, infra nodes that only run these components don't need OpenShift subscriptions).
+          The pattern is <strong>label + taint on the node, nodeSelector + toleration on the workload</strong>.
+        </p>
+        <p>In production, set these in the infra <code>MachineSet</code> template (<code>spec.template.spec.metadata.labels</code> and <code>spec.template.spec.taints</code>) so new nodes get them automatically. The manual equivalent is:</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">oc label node infra01 node-role.kubernetes.io/infra=""
+oc adm taint nodes infra01 node-role.kubernetes.io/infra=reserved:NoSchedule</code></pre>
+        <p>Move the default ingress controller (router pods) onto them:</p>
+        <pre class="changes" data-label="changes the system: router pods are redeployed"><code class="language-bash">oc patch ingresscontroller/default -n openshift-ingress-operator --type=merge -p '
+{"spec":{"nodePlacement":{
+  "nodeSelector":{"matchLabels":{"node-role.kubernetes.io/infra":""}},
+  "tolerations":[{"key":"node-role.kubernetes.io/infra","value":"reserved","effect":"NoSchedule"}]
+}}}'</code></pre>
+        <p>The image registry operator uses <code>spec.nodeSelector</code> and <code>spec.tolerations</code> in the same way:</p>
+        <pre class="changes" data-label="changes the system"><code class="language-bash">oc patch configs.imageregistry.operator.openshift.io/cluster --type=merge -p '
+{"spec":{
+  "nodeSelector":{"node-role.kubernetes.io/infra":""},
+  "tolerations":[{"key":"node-role.kubernetes.io/infra","value":"reserved","effect":"NoSchedule"}]
+}}'</code></pre>
+        <p>Operators installed through OLM accept placement in their <code>Subscription</code>:</p>
+        <pre data-label="yaml"><code class="language-yaml">apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: my-operator
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: my-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  config:
+    nodeSelector:
+      node-role.kubernetes.io/infra: ""
+    tolerations:
+    - key: node-role.kubernetes.io/infra
+      value: reserved
+      effect: NoSchedule</code></pre>
+        <pre data-label="read-only: verify"><code class="language-bash">oc get nodes -l node-role.kubernetes.io/infra
+oc get pods -n openshift-ingress -o wide
+oc get pods -n openshift-image-registry -o wide</code></pre>
+        <div class="callout">
+          <span class="callout-title">OpenShift project node selectors</span>
+          <p>OpenShift can apply a node selector to <em>every pod in a project</em>, through the <code>openshift.io/node-selector</code>
+          namespace annotation or the cluster-wide <code>defaultNodeSelector</code> in <code>schedulers.config.openshift.io/cluster</code>.
+          It is merged with the pod's own selector. If the two conflict, the pod can never be scheduled. Check with
+          <code>oc get namespace my-app -o yaml | grep node-selector</code>.</p>
+        </div>
+
+        <h2 id="workflow">Troubleshooting workflow</h2>
+        <h3>1. Confirm it is a scheduling problem</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get pods -n my-app -o wide              # Pending + NODE &lt;none&gt;
+kubectl get events -A --field-selector reason=FailedScheduling</code></pre>
+
+        <h3>2. Read the pod's scheduling constraints</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl describe pod api-5f7b9c4d8-8kz2m -n my-app     # Node-Selectors, Tolerations, Events
+kubectl get pod api-5f7b9c4d8-8kz2m -n my-app \
+  -o jsonpath='{.spec.nodeSelector}{"\n"}{.spec.affinity}{"\n"}{.spec.tolerations}{"\n"}'
+kubectl get pod api-5f7b9c4d8-8kz2m -n my-app \
+  -o jsonpath='{range .spec.containers[*]}{.name}{" "}{.resources.requests}{"\n"}{end}'</code></pre>
+
+        <h3>3. Compare with what the nodes offer</h3>
+        <pre data-label="read-only"><code class="language-bash">kubectl get nodes -L node-role.kubernetes.io/infra,topology.kubernetes.io/zone
+kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
+kubectl describe node worker01 | grep -A 10 'Allocated resources'</code></pre>
+
+        <h3>4. Fix the side that is wrong</h3>
+        <p>Either the pod's rules are wrong (fix the manifest), or the nodes are missing a label/capacity (fix the nodes).
+        Change one thing at a time and watch the pod's events for the new message.</p>
+        <p>With <code>oc</code>, every command above works as-is: replace <code>kubectl</code> with <code>oc</code>, and use
+        <code>oc adm taint</code> / <code>oc adm top nodes</code> for the admin variants.</p>
+
+        <h2 id="scheduling-errors">Reading FailedScheduling messages</h2>
+        <pre class="output" data-label="output"><code class="language-text">Warning  FailedScheduling  2m  default-scheduler  0/6 nodes are available:
+  3 node(s) had untolerated taint {node-role.kubernetes.io/master: },
+  2 Insufficient memory,
+  1 node(s) didn't match Pod's node affinity/selector.
+  preemption: 0/6 nodes are available: 2 No preemption victims found for incoming pod,
+  4 Preemption is not helpful for scheduling.</code></pre>
+        <p>(Wrapped for readability. The real message is a single line.) Read it as: "of 6 nodes, none passed filtering":</p>
+        <ul>
+          <li><strong>3 had an untolerated taint</strong>: the 3 control plane nodes. Expected, ignore them.</li>
+          <li><strong>2 Insufficient memory</strong>: 2 workers passed every other filter but don't have enough unrequested memory. <em>This is the actionable part.</em></li>
+          <li><strong>1 didn't match the node selector/affinity</strong>: the pod's rules exclude that node, for example an infra node.</li>
+          <li><strong>preemption</strong>: evicting lower-priority pods wouldn't help (or no lower-priority pods exist).</li>
+        </ul>
+        <p>Counts usually add up to the node total, but a single node can appear under more than one reason
+        (for example, both <code>Insufficient cpu</code> and <code>Insufficient memory</code>). Common reasons:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Message fragment</th><th>Meaning</th><th>Where to look</th></tr></thead>
+            <tbody>
+              <tr><td><code>Insufficient cpu</code> / <code>Insufficient memory</code></td><td>Requests exceed free allocatable</td><td><code>describe node</code> → Allocated resources. Pod requests</td></tr>
+              <tr><td><code>had untolerated taint {key: value}</code></td><td>Node taint without a matching toleration</td><td>Node taints vs pod tolerations</td></tr>
+              <tr><td><code>didn't match Pod's node affinity/selector</code></td><td>Labels don't satisfy nodeSelector / required affinity</td><td>Pod spec, node labels, OpenShift project selector</td></tr>
+              <tr><td><code>didn't match pod anti-affinity rules</code></td><td>Required anti-affinity blocks the node</td><td>Replica count vs eligible nodes</td></tr>
+              <tr><td><code>node(s) were unschedulable</code></td><td>Node is cordoned</td><td><code>kubectl get nodes</code> (<code>SchedulingDisabled</code>)</td></tr>
+              <tr><td><code>had volume node affinity conflict</code></td><td>The PV is bound to a zone/node the pod can't use</td><td><code>kubectl get pv -o yaml</code> → <code>nodeAffinity</code></td></tr>
+              <tr><td><code>pod has unbound immediate PersistentVolumeClaims</code></td><td>PVC isn't bound</td><td><code>describe pvc</code>, StorageClass</td></tr>
+              <tr><td><code>didn't have free ports for the requested pod ports</code></td><td><code>hostPort</code> already used on the node</td><td>Other pods using the same <code>hostPort</code></td></tr>
+              <tr><td><code>Too many pods</code></td><td>Node reached its <code>maxPods</code> limit</td><td><code>describe node</code> → Capacity: pods</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="common-problems">Common problems</h2>
+
+        <div class="scenario">
+          <h3>Pod tolerates the infra taint but still lands on worker nodes</h3>
+          <dl>
+            <dt>Cause</dt>
+            <dd>A toleration only permits placement. There is no <code>nodeSelector</code> or affinity pulling the pod to infra nodes.</dd>
+            <dt>Resolution</dt>
+            <dd>Add <code>nodeSelector: {node-role.kubernetes.io/infra: ""}</code> alongside the toleration.</dd>
+            <dt>Verification</dt>
+            <dd><code>kubectl get pods -o wide</code> shows only infra nodes in the <code>NODE</code> column.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>Pods evicted right after tainting a node</h3>
+          <dl>
+            <dt>Cause</dt>
+            <dd>The taint used <code>NoExecute</code>, which evicts running pods that don't tolerate it. <code>NoSchedule</code> would only have affected new pods.</dd>
+            <dt>Resolution</dt>
+            <dd>Use <code>NoSchedule</code> first, move workloads deliberately (drain or roll out), and only then add <code>NoExecute</code> if you need it.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>Some replicas are Pending after scaling up</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>didn't match pod anti-affinity rules</code> for the extra replicas.</dd>
+            <dt>Cause</dt>
+            <dd>Required anti-affinity on <code>kubernetes.io/hostname</code> with more replicas than eligible nodes.</dd>
+            <dt>Resolution</dt>
+            <dd>Switch to <code>preferred</code> anti-affinity or <code>topologySpreadConstraints</code> with <code>whenUnsatisfiable: ScheduleAnyway</code>, or add nodes.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3>StatefulSet pod Pending after a node was replaced</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>had volume node affinity conflict</code>.</dd>
+            <dt>Cause</dt>
+            <dd>The pod's PV is zonal (cloud block storage) or local, and no schedulable node exists in that zone or on that host.</dd>
+            <dt>Resolution</dt>
+            <dd>Bring a node back in that zone, or restore the data to a new volume. Use <code>volumeBindingMode: WaitForFirstConsumer</code> on StorageClasses so new volumes are created where the pod can actually run.</dd>
+          </dl>
+        </div>
+
+        <h2 id="tips">Troubleshooting tips</h2>
+        <ul>
+          <li>Ignore the reasons you expect (control plane taints) and focus on the nodes that <em>should</em> have fit.</li>
+          <li>Taint keys, values and effects must match exactly. <code>dedicated=infra:NoSchedule</code> is not tolerated by a toleration for <code>dedicated=Infra</code>.</li>
+          <li>Setting <code>spec.nodeName</code> by hand bypasses the scheduler entirely (no filtering, no events). Avoid it except for debugging.</li>
+          <li>DaemonSets tolerate some taints automatically (such as <code>unschedulable</code> and the node-pressure taints), but not custom ones like <code>dedicated=infra</code>. Add those tolerations explicitly if the DaemonSet must run on tainted nodes.</li>
+          <li>After fixing a node label or taint, the scheduler retries pending pods automatically. There's no need to delete them.</li>
+        </ul>
+
+        <h2 id="best-practices">Best practices</h2>
+        <ul>
+          <li>Use <strong>taint + label + selector/toleration</strong> together for dedicated nodes, never a taint alone.</li>
+          <li>Manage node labels and taints through MachineSets / cloud node pools or config management, so replacement nodes get them too.</li>
+          <li>Prefer soft rules (<code>preferred</code>, <code>PreferNoSchedule</code>, <code>ScheduleAnyway</code>) unless a hard rule is a real requirement.</li>
+          <li>Set accurate resource requests. They are the most common reason pods don't fit.</li>
+          <li>Use well-known label keys (<code>topology.kubernetes.io/zone</code>, <code>node-role.kubernetes.io/&lt;role&gt;</code>) and document custom ones.</li>
+          <li>Keep headroom: leave enough spare capacity to reschedule the pods of your largest node.</li>
+        </ul>
+
+        <h2 id="summary">Summary</h2>
+        <ul>
+          <li><strong>nodeSelector / node affinity</strong> (on the pod) pull pods to nodes. <strong>Taints</strong> (on the node) push pods away unless they have a <strong>toleration</strong>.</li>
+          <li><code>NoSchedule</code> blocks new pods, <code>PreferNoSchedule</code> is a soft version, and <code>NoExecute</code> also evicts running pods.</li>
+          <li>Dedicated nodes (for example OpenShift infra) need a label and a taint on the node, plus a selector and a toleration on the workload.</li>
+          <li><code>0/N nodes are available</code> lists why each node was rejected. Find the reason for the nodes that should have fit, and fix that.</li>
+        </ul>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+</body>
+</html>

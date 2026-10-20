@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Linux Disk Space Troubleshooting Guide — Mario Paniagua</title>
+  <meta name="description" content="How to find what is filling a Linux/RHEL filesystem: df, du, find, lsof, deleted-but-open files, inode exhaustion, journald, package caches and container storage, with safe cleanup.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Linux Disk Space Troubleshooting Guide">
+  <meta property="og:description" content="How to find what is filling a Linux/RHEL filesystem: df, du, find, lsof, deleted-but-open files, inode exhaustion, journald, package caches and container storage, with safe cleanup.">
+  <meta property="article:published_time" content="2026-09-29">
+  <meta property="article:section" content="Linux">
+  <meta property="article:tag" content="linux">
+  <meta property="article:tag" content="rhel">
+  <meta property="article:tag" content="troubleshooting">
+  <meta property="article:tag" content="system administration">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / linux-disk-space-troubleshooting</p>
+
+      <article class="article prose">
+        <h1>Linux Disk Space Troubleshooting Guide</h1>
+        <p class="article-meta"><span class="cat">Linux</span> · <span class="level" data-level="intermediate"><span class="level-bars" aria-hidden="true">■■□</span> Intermediate</span> · <span class="reading-time">12 min read</span> · <span class="published">Published <time datetime="2026-09-29">Sep 29, 2026</time></span></p>
+        <ul class="tags"><li>linux</li><li>rhel</li><li>troubleshooting</li><li>system administration</li></ul>
+
+        <p class="lead">
+          How to find out what is filling a filesystem on a Linux/RHEL server, including the cases
+          where <code>df</code> and <code>du</code> disagree, and how to free space without deleting
+          something you need.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#how-it-works">How disk usage is counted</a></li>
+              <li><a href="#workflow">Troubleshooting workflow</a></li>
+              <li><a href="#reference">Commands and examples</a></li>
+              <li><a href="#output">Reading the output</a></li>
+              <li><a href="#common-problems">Common problems</a></li>
+              <li><a href="#tips">Troubleshooting tips</a></li>
+              <li><a href="#best-practices">Best practices</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <div class="callout">
+          <span class="callout-title">Convention used in this article</span>
+          <p>Blue code blocks labelled <strong>read-only</strong> only inspect the system and are safe to run.
+          Amber blocks labelled <strong>changes the system</strong> delete, truncate or modify something.
+          Read the explanation before running them.</p>
+        </div>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          A full filesystem rarely stays a small problem. When <code>/var</code> hits 100%, databases stop
+          accepting writes, journald and application logs drop messages, package updates fail halfway through, and
+          SSH logins can fail. The goal is to find the <em>actual</em> consumer quickly, free space
+          safely, and then stop it happening again.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>Monitoring alerts on filesystem usage (for example, over 85%).</li>
+          <li>Applications log <code>No space left on device</code> (<code>ENOSPC</code>).</li>
+          <li><code>df</code> shows free space but writes still fail (inodes).</li>
+          <li><code>df</code> shows the disk full, but <code>du</code> can't find the files (deleted-but-open files).</li>
+          <li><code>dnf update</code> fails because <code>/boot</code> or <code>/var</code> is full.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li>Shell access. Root or <code>sudo</code> is needed to see every directory and every process's open files.</li>
+          <li><code>lsof</code> installed (<code>dnf install lsof</code> on RHEL if it's missing).</li>
+          <li>Examples assume RHEL 8/9 (XFS on LVM, <code>dnf</code>, systemd). The commands also work on other distributions, with different paths.</li>
+        </ul>
+
+        <h2 id="how-it-works">How disk usage is counted</h2>
+        <p>Two different views of the same filesystem:</p>
+        <ul>
+          <li><strong><code>df</code></strong> asks the filesystem how many blocks are allocated. This is the truth about free space.</li>
+          <li><strong><code>du</code></strong> walks the directory tree and adds up the files it can <em>see</em>.</li>
+        </ul>
+        <p>They disagree when space is used by something that has no visible path:</p>
+        <ul>
+          <li><strong>Deleted files still held open by a process.</strong> <code>rm</code> removes the directory entry, but blocks are only freed when the last file descriptor is closed.</li>
+          <li><strong>Files hidden under a mount point.</strong> Data written to <code>/data</code> <em>before</em> a filesystem was mounted there still uses space on the parent filesystem.</li>
+          <li><strong>Reserved blocks</strong> (ext4 reserves 5% for root by default). XFS has no equivalent root-reserved percentage.</li>
+        </ul>
+        <p>
+          Separately, every file needs an <strong>inode</strong>. A filesystem can run out of inodes while
+          plenty of blocks are still free, usually because of millions of tiny files.
+        </p>
+
+        <h2 id="workflow">Troubleshooting workflow</h2>
+
+        <h3 id="step-1">1. Which filesystem is full: blocks or inodes?</h3>
+        <pre data-label="read-only"><code class="language-bash">df -hT        # human-readable sizes plus filesystem type
+df -i         # inode usage
+df -h /var    # just the filesystem that contains /var</code></pre>
+        <p>
+          Always identify the <em>filesystem</em> first. <code>/var/log</code> being large doesn't matter if
+          <code>/var</code> is its own logical volume with plenty of room.
+        </p>
+
+        <h3 id="step-2">2. Find the largest directories on that filesystem</h3>
+        <pre data-label="read-only"><code class="language-bash"># -x: stay on one filesystem (don't descend into /proc, NFS, other LVs)
+sudo du -xh --max-depth=1 / 2&gt;/dev/null | sort -h | tail -15
+
+# Drill down into the biggest one and repeat
+sudo du -xh --max-depth=1 /var 2&gt;/dev/null | sort -h | tail -15</code></pre>
+        <p>
+          <code>-x</code> matters: without it, <code>du /</code> also counts every other mounted
+          filesystem and sends you looking in the wrong place.
+        </p>
+
+        <h3 id="step-3">3. Find large and recently grown files</h3>
+        <pre data-label="read-only"><code class="language-bash"># Files over 500 MB on the /var filesystem
+sudo find /var -xdev -type f -size +500M -exec ls -lh {} + 2&gt;/dev/null
+
+# Files over 50 MB modified in the last 60 minutes (what is growing right now?)
+sudo find / -xdev -type f -size +50M -mmin -60 -exec ls -lh {} + 2&gt;/dev/null
+
+# Largest files in a directory
+ls -lhS /var/log | head -15</code></pre>
+
+        <h3 id="step-4">4. If df and du disagree: deleted but open files</h3>
+        <pre data-label="read-only"><code class="language-bash"># Open files whose link count is 0 (deleted but still held open)
+sudo lsof -nP +L1
+
+# Alternative if lsof is unavailable
+sudo find /proc/[0-9]*/fd -lname '*(deleted)' -printf '%p -&gt; %l\n' 2&gt;/dev/null</code></pre>
+        <p>The fix is to make the process close the file. See <a href="#deleted-open">Deleted files still using space</a>.</p>
+
+        <h3 id="step-5">5. Check the usual suspects</h3>
+        <pre data-label="read-only"><code class="language-bash">sudo du -sh /var/log /var/log/journal /var/cache/dnf /var/lib/containers /var/lib/docker \
+  /var/crash /var/lib/systemd/coredump /tmp /var/tmp 2&gt;/dev/null
+journalctl --disk-usage
+rpm -q kernel                  # installed kernels (each one uses space in /boot)</code></pre>
+
+        <h3 id="step-6">6. Free space safely, then fix the cause</h3>
+        <p>
+          Prefer, in this order: <strong>rotate or compress → vacuum/clean with the owning tool →
+          truncate → delete</strong>. Always use the tool that owns the data (journalctl, dnf, podman,
+          logrotate) rather than <code>rm</code> on its files. Once the immediate pressure is gone, fix
+          whatever caused the growth (log level, retention, a runaway job) or extend the filesystem.
+        </p>
+
+        <h2 id="reference">Commands and examples</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Command</th><th>Purpose</th><th>Changes system?</th></tr></thead>
+            <tbody>
+              <tr><td><code>df -hT</code> / <code>df -i</code></td><td>Block / inode usage per filesystem</td><td>No</td></tr>
+              <tr><td><code>du -xh --max-depth=1 &lt;dir&gt;</code></td><td>Directory sizes on one filesystem</td><td>No</td></tr>
+              <tr><td><code>du --inodes -x --max-depth=1 &lt;dir&gt;</code></td><td>Which directory holds the most files</td><td>No</td></tr>
+              <tr><td><code>find &lt;dir&gt; -xdev -type f -size +500M</code></td><td>Large files</td><td>No</td></tr>
+              <tr><td><code>lsof -nP +L1</code></td><td>Deleted files still held open</td><td>No</td></tr>
+              <tr><td><code>journalctl --disk-usage</code></td><td>Journal size</td><td>No</td></tr>
+              <tr><td><code>logrotate -d /etc/logrotate.conf</code></td><td>Dry-run: show what logrotate would do</td><td>No</td></tr>
+              <tr><td><code>journalctl --vacuum-size=500M</code></td><td>Shrink archived journal files</td><td><strong>Yes</strong>: deletes old logs</td></tr>
+              <tr><td><code>dnf clean all</code></td><td>Remove dnf cache</td><td><strong>Yes</strong>: safe, re-downloaded on demand</td></tr>
+              <tr><td><code>truncate -s 0 &lt;file&gt;</code></td><td>Empty a file in place</td><td><strong>Yes</strong>: data is lost</td></tr>
+              <tr><td><code>podman image prune</code></td><td>Remove dangling images</td><td><strong>Yes</strong></td></tr>
+              <tr><td><code>lvextend -r -L +10G &lt;lv&gt;</code></td><td>Grow LV and filesystem</td><td><strong>Yes</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="output">Reading the output</h2>
+
+        <h3>df -hT</h3>
+        <pre class="output" data-label="output"><code class="language-text">Filesystem            Type   Size  Used Avail Use% Mounted on
+/dev/mapper/rhel-root xfs     20G  6.1G   14G  31% /
+/dev/mapper/rhel-var  xfs     15G   15G   20K 100% /var
+/dev/mapper/rhel-home xfs     10G  1.2G  8.8G  12% /home
+/dev/sda1             xfs   1014M  987M   28M  98% /boot
+tmpfs                 tmpfs  1.6G     0  1.6G   0% /run/user/0</code></pre>
+        <p>
+          <code>/var</code> is the problem, and <code>/boot</code> is close behind (usually too many old
+          kernels). <code>tmpfs</code> lives in RAM. Ignore it for disk problems.
+        </p>
+
+        <h3>du --max-depth=1</h3>
+        <pre class="output" data-label="output"><code class="language-text">24M     /var/spool
+310M    /var/cache
+1.1G    /var/lib
+13G     /var/log
+15G     /var</code></pre>
+        <p><code>/var/log</code> holds 13 of the 15 GB, so that's where to drill down next.</p>
+
+        <h3>lsof +L1</h3>
+        <pre class="output" data-label="output"><code class="language-text">COMMAND   PID  USER   FD   TYPE DEVICE    SIZE/OFF NLINK     NODE NAME
+java     2314  app    12w   REG  253,2 9663676416     0  1048721 /var/log/app/app.log (deleted)</code></pre>
+        <p>
+          PID 2314 still has a 9 GB log file open for writing (<code>12w</code> = fd 12, write mode) that
+          someone deleted with <code>rm</code>. <code>NLINK 0</code> means no path points to it anymore. The
+          space is only freed when that process closes fd 12 or exits.
+        </p>
+
+        <h3>df -i</h3>
+        <pre class="output" data-label="output"><code class="language-text">Filesystem             Inodes  IUsed IFree IUse% Mounted on
+/dev/mapper/rhel-var  7864320 7864320    0  100% /var</code></pre>
+        <p>No inodes left: new files can't be created even though <code>df -h</code> may show free space.</p>
+
+        <h2 id="common-problems">Common problems</h2>
+
+        <div class="scenario">
+          <h3 id="logs">Log files have grown too large</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>/var/log</code> or an application log directory is many GB, and one file keeps growing.</dd>
+            <dt>Possible causes</dt>
+            <dd>Debug logging left enabled, an error loop, a logrotate rule missing or never applied, or an application that writes its own logs outside logrotate's config.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">sudo du -sh /var/log/* 2&gt;/dev/null | sort -h | tail
+sudo tail -n 50 /var/log/app/app.log           # what is it logging?
+sudo logrotate -d /etc/logrotate.conf 2&gt;&amp;1 | grep -A3 app   # would it rotate?</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+              <p>Rotate the log if a rule exists. To empty an active log in place, truncate it. Do not <code>rm</code> it:</p>
+<pre class="changes" data-label="changes the system"><code class="language-bash"># Force rotation for one config (runs postrotate scripts, may restart/reload the service)
+sudo logrotate -f /etc/logrotate.d/app
+
+# Empty the file in place. The writing process keeps its descriptor and space is freed at once.
+sudo truncate -s 0 /var/log/app/app.log</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p>Truncating destroys the log contents. If the logs may be needed for an incident or audit,
+                copy or compress them to another filesystem first. <code>rm</code> on a file that is still open
+                frees <em>no</em> space and makes the problem harder to find (see the next section).</p>
+              </div>
+            </dd>
+            <dt>Verification</dt>
+            <dd><code>df -h /var</code> shows the space returned, and the application keeps writing to the file.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="deleted-open">Deleted files still using space</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>df</code> reports 100%, but <code>du</code> totals far less. Someone recently ran <code>rm</code> on a large log.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">sudo lsof -nP +L1 | awk 'NR==1 || $7 &gt; 100000000'    # open deleted files over ~100 MB</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+              <p>The clean fix is to restart or reload the owning service so it reopens its log file:</p>
+<pre class="changes" data-label="changes the system"><code class="language-bash">sudo systemctl restart app.service</code></pre>
+              <p>If a restart is not possible right now, you can truncate the deleted file through the process's descriptor:</p>
+<pre class="changes" data-label="changes the system: data loss"><code class="language-bash"># PID 2314, FD 12 from the lsof output above
+sudo truncate -s 0 /proc/2314/fd/12</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p>Double-check the PID and FD. Truncating the wrong descriptor (a database file, for example)
+                corrupts data. Only use this on log files you are sure you can lose.</p>
+              </div>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="inodes">Inode exhaustion</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>No space left on device</code> while <code>df -h</code> shows free space, and <code>df -i</code> shows 100%.</dd>
+            <dt>Possible causes</dt>
+            <dd>Session files, mail queue (<code>/var/spool/postfix</code>), cache directories, or a cron job that creates a small file on every run.</dd>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">sudo du --inodes -x --max-depth=1 /var 2&gt;/dev/null | sort -n | tail
+sudo du --inodes -x --max-depth=1 /var/lib/php 2&gt;/dev/null | sort -n | tail</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+              <p>Remove old files in the offending directory. Always print what would be deleted before deleting it:</p>
+<pre data-label="read-only: preview"><code class="language-bash">sudo find /var/lib/php/sessions -xdev -type f -mtime +7 -print | head
+sudo find /var/lib/php/sessions -xdev -type f -mtime +7 | wc -l</code></pre>
+<pre class="changes" data-label="changes the system: deletes files"><code class="language-bash">sudo find /var/lib/php/sessions -xdev -type f -mtime +7 -delete</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p>Run <code>find ... -delete</code> only with the exact same path and filters you just previewed.
+                <code>-delete</code> must come <em>after</em> the tests. Placed earlier, it deletes everything that
+                <code>find</code> walks. Then fix whatever creates the files. XFS inode counts grow dynamically, but ext4's
+                are fixed at <code>mkfs</code> time.</p>
+              </div>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="journal">systemd journal using too much space</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">journalctl --disk-usage
+sudo du -sh /var/log/journal /run/log/journal 2&gt;/dev/null</code></pre>
+              <p><code>/var/log/journal</code> exists when the journal is persistent. Otherwise it lives in <code>/run</code> (RAM) and is lost on reboot.</p>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+<pre class="changes" data-label="changes the system: deletes old journal files"><code class="language-bash">sudo journalctl --vacuum-size=1G     # keep at most 1 GB of archived journals
+sudo journalctl --vacuum-time=14d    # or: drop archived entries older than 14 days</code></pre>
+              <p>Make the limit permanent in <code>/etc/systemd/journald.conf</code>, then restart journald:</p>
+<pre class="changes" data-label="/etc/systemd/journald.conf"><code class="language-ini">[Journal]
+SystemMaxUse=1G
+SystemKeepFree=2G</code></pre>
+<pre class="changes" data-label="changes the system"><code class="language-bash">sudo systemctl restart systemd-journald</code></pre>
+              <p>Vacuuming only removes <em>archived</em> journal files, not the active one. Never delete files under <code>/var/log/journal</code> with <code>rm</code>.</p>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="packages">Package cache and old kernels</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">sudo du -sh /var/cache/dnf /var/cache/yum 2&gt;/dev/null
+rpm -q kernel
+uname -r                                    # the running kernel
+grep installonly_limit /etc/dnf/dnf.conf    # how many kernels dnf keeps (default 3)</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+<pre class="changes" data-label="changes the system"><code class="language-bash"># Safe: cached metadata and packages are downloaded again when needed
+sudo dnf clean all
+
+# RHEL 8/9: remove old kernels, keeping the newest 2
+sudo dnf remove --oldinstallonly --setopt installonly_limit=2 kernel</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p>Check that <code>dnf</code> is not going to remove the running kernel (<code>uname -r</code>), and always keep
+                at least one known-good fallback kernel. Never delete files in <code>/boot</code> by hand. The
+                bootloader entries and initramfs files must stay consistent with installed packages.</p>
+              </div>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="containers">Container storage (Podman / Docker)</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">podman system df            # images, containers, volumes, and what is reclaimable
+docker system df            # same, if Docker is used
+sudo du -sh /var/lib/containers/storage /var/lib/docker 2&gt;/dev/null
+du -sh ~/.local/share/containers/storage        # rootless podman, per user</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+<pre class="changes" data-label="changes the system"><code class="language-bash">podman image prune          # dangling (untagged) images only
+podman container prune      # stopped containers
+podman system prune         # both, plus unused networks and build cache</code></pre>
+              <div class="callout warn">
+                <span class="callout-title">Warning</span>
+                <p><code>podman system prune -a</code> (or <code>docker system prune -a</code>) removes <strong>every image not used by a
+                running container</strong>, and <code>--volumes</code> also deletes unused volumes, which may hold data.
+                Never delete directories under <code>/var/lib/containers</code> or <code>/var/lib/docker</code> directly.
+                That corrupts the storage metadata. On Kubernetes/OpenShift nodes, let the kubelet's image garbage
+                collection manage images instead of pruning by hand.</p>
+              </div>
+              <p>For Docker, cap container log growth in <code>/etc/docker/daemon.json</code>:</p>
+<pre class="changes" data-label="/etc/docker/daemon.json"><code class="language-json">{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}</code></pre>
+            </dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="hidden-mount">Files hidden under a mount point</h3>
+          <dl>
+            <dt>Symptoms</dt>
+            <dd><code>/</code> is full, <code>du -x /</code> doesn't account for it, and <code>lsof +L1</code> shows nothing.</dd>
+            <dt>Investigation</dt>
+            <dd>
+              <p>Bind-mount the root filesystem somewhere else to see what lies underneath the mount points:</p>
+<pre class="changes" data-label="changes the system: temporary mount, no data modified"><code class="language-bash">sudo mkdir -p /mnt/rootfs
+sudo mount --bind / /mnt/rootfs
+sudo du -sh /mnt/rootfs/data /mnt/rootfs/var 2&gt;/dev/null
+sudo umount /mnt/rootfs</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>Move the hidden files to where they belong (the real mounted filesystem), usually during a maintenance window with the application stopped.</dd>
+          </dl>
+        </div>
+
+        <div class="scenario">
+          <h3 id="extend">The data is legitimate: extend the filesystem</h3>
+          <dl>
+            <dt>Investigation</dt>
+            <dd>
+<pre data-label="read-only"><code class="language-bash">sudo vgs            # VFree: unallocated space in the volume group
+sudo lvs</code></pre>
+            </dd>
+            <dt>Resolution</dt>
+            <dd>
+<pre class="changes" data-label="changes the system"><code class="language-bash"># Grow the LV by 10 GB and resize the filesystem in the same step (-r)
+sudo lvextend -r -L +10G /dev/rhel/var</code></pre>
+              <p>XFS can grow online but can <strong>never be shrunk</strong>. Add only what you need, and take a snapshot or backup of critical systems first.</p>
+            </dd>
+          </dl>
+        </div>
+
+        <h2 id="tips">Troubleshooting tips</h2>
+        <ul>
+          <li>On a completely full <code>/</code>, even tab-completion or <code>sort</code> (which writes temp files) can fail. Free a few MB first, for example with <code>dnf clean all</code> or <code>journalctl --vacuum-size</code>.</li>
+          <li>Use <code>ncdu -x /</code> (from EPEL) for interactive browsing if it's available. It is read-only until you press <code>d</code>.</li>
+          <li><code>du</code> on large trees or NFS can be slow. Scope it to the full filesystem with <code>-x</code> and drill down level by level.</li>
+          <li>Check <code>/var/crash</code> (kdump vmcores) and <code>coredumpctl list</code>. A single crash dump can be many GB.</li>
+          <li>On ext4, <code>tune2fs -l /dev/mapper/... | grep -i 'reserved block'</code> shows the root reserve, which explains why "Avail" is less than "Size − Used".</li>
+        </ul>
+
+        <h2 id="best-practices">Best practices</h2>
+        <ul>
+          <li>Separate filesystems (or LVs) for <code>/var</code>, <code>/var/log</code>, <code>/tmp</code> and application data, so a runaway log can't fill <code>/</code>.</li>
+          <li>Every application log should have a logrotate rule, or log to journald with limits set.</li>
+          <li>Alert at 80–85% (and on inode usage), not at 100%.</li>
+          <li>Keep some free extents in the volume group for emergencies.</li>
+          <li>Truncate or rotate active logs. Never <code>rm</code> them.</li>
+          <li>Preview every <code>find</code> before adding <code>-delete</code>, and never run cleanup commands with unquoted globs or variables that might be empty (<code>rm -rf "$DIR"/*</code> with an empty <code>$DIR</code> expands to <code>/*</code>).</li>
+        </ul>
+
+        <h2 id="summary">Summary</h2>
+        <ol>
+          <li><code>df -hT</code> and <code>df -i</code>: which filesystem, and is it blocks or inodes?</li>
+          <li><code>du -xh --max-depth=1</code>: drill down to the biggest directory.</li>
+          <li><code>find -size</code> / <code>-mmin</code>: large or fast-growing files.</li>
+          <li><code>lsof +L1</code>: if <code>df</code> and <code>du</code> disagree.</li>
+          <li>Clean up with the owning tool (journalctl, dnf, podman, logrotate), truncate rather than delete active logs, then fix the cause or extend the volume.</li>
+        </ol>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-ini.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+</body>
+</html>
