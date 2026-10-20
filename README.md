@@ -16,7 +16,10 @@ articles/*.html       knowledge-base articles
 resume.html           resume (under construction for now)
 about.html            full bio, focus areas, contact (#contact)
 css/style.css         shared theme (colors are CSS variables on :root)
+css/motion.css        animations: page transitions, menus, reveals, reading progress, boot intro
 js/terminal.js        terminal widget (home page only)
+js/motion.js          every page: mobile menu, knowledge-base dropdown, scroll reveal, cursor glow,
+                      article progress bar + back-to-top, boot intro (home, once per session)
 js/kb-articles.js     knowledge-base metadata: the single list of articles
 js/knowledge-base.js  index page: cards, search, category/tag filters, result count
 js/article.js         article pages: copy buttons, previous/next, related articles
