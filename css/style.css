@@ -479,28 +479,6 @@ kbd {
 .token.important, .token.bold { font-weight: 700; }
 
 /* ==========================================================================
-   Under-construction block (projects page)
-   ========================================================================== */
-.construction {
-  border: 1px dashed var(--amber);
-  border-radius: 6px;
-  padding: 1.2rem;
-  max-width: 65ch;
-}
-.construction .warn-line { color: var(--amber); font-weight: 700; margin-top: 0; overflow-wrap: anywhere; }
-.construction p:last-child { margin-bottom: 0; }
-.build-log {
-  margin: 0 0 1rem;
-  padding: .8rem 1rem;
-  background: #050807;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font: inherit;
-  font-size: .85rem;
-  overflow-x: auto;
-}
-
-/* ==========================================================================
    Terminal widget
    ========================================================================== */
 .terminal {
@@ -626,4 +604,49 @@ kbd {
 @media (max-width: 560px) {
   .kv.skills { grid-template-columns: 1fr; gap: 0; }
   .kv.skills dd { margin-bottom: .6rem; }
+}
+
+/* ==========================================================================
+   Project pages
+   ========================================================================== */
+.status-pill { color: var(--amber); }
+.project-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .3rem 1.2rem;
+  margin: 1rem 0 1.4rem;
+  padding: .9rem 1rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: .9rem;
+}
+.project-facts dt { color: var(--amber); }
+.project-facts dd { margin: 0; overflow-wrap: anywhere; }
+.prose figure { margin: 1rem 0 1.6rem; }
+.prose figcaption { font-size: .8rem; color: var(--muted); margin-top: .5rem; }
+.diagram svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  font-family: var(--font);
+  background: #070b0a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.shot img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+@media (max-width: 560px) {
+  .project-facts { grid-template-columns: 1fr; gap: 0; }
+  .project-facts dd { margin-bottom: .5rem; }
+}
+@media (min-width: 720px) { .project-card { grid-column: span 2; } }
+@media (max-width: 640px) {
+  .diagram { overflow-x: auto; }
+  .diagram svg { min-width: 620px; }
 }

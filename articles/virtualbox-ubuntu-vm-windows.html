@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Running an Ubuntu Server VM on Windows with VirtualBox — Mario Paniagua</title>
+  <meta name="description" content="Set up an Ubuntu Server lab VM in VirtualBox on Windows: wizard gotchas, the installer's half-disk LVM default, bridged networking, and the Hyper-V setting that hides AVX2 from the guest.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Running an Ubuntu Server VM on Windows with VirtualBox">
+  <meta property="og:description" content="Set up an Ubuntu Server lab VM in VirtualBox on Windows: wizard gotchas, the installer's half-disk LVM default, bridged networking, and the Hyper-V setting that hides AVX2 from the guest.">
+  <meta property="article:published_time" content="2026-10-21">
+  <meta property="article:section" content="Virtualization">
+  <meta property="article:tag" content="virtualbox">
+  <meta property="article:tag" content="windows">
+  <meta property="article:tag" content="hyper-v">
+  <meta property="article:tag" content="ubuntu">
+  <meta property="article:tag" content="networking">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="../css/motion.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html">projects</a></li>
+          <li><a href="../knowledge-base.html" aria-current="true">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../knowledge-base.html">~/knowledge-base</a> / virtualbox-ubuntu-vm-windows</p>
+
+      <article class="article prose">
+        <h1>Running an Ubuntu Server VM on Windows with VirtualBox</h1>
+        <p class="article-meta"><span class="cat">Virtualization</span> · <span class="level" data-level="beginner"><span class="level-bars" aria-hidden="true">■□□</span> Beginner</span> · <span class="reading-time">7 min read</span> · <span class="published">Published <time datetime="2026-10-21">Oct 21, 2026</time></span></p>
+        <ul class="tags"><li>virtualbox</li><li>windows</li><li>hyper-v</li><li>ubuntu</li><li>networking</li></ul>
+
+        <p class="lead">
+          Setting up an Ubuntu Server VM on a Windows PC as a homelab node: the wizard and installer
+          defaults that get in the way, how to put the VM on your LAN, and the Hyper-V setting that
+          quietly makes it slower by hiding CPU features like AVX2.
+        </p>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#introduction">Introduction</a></li>
+              <li><a href="#when-useful">When this is useful</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#create-vm">Create the VM</a></li>
+              <li><a href="#install">Install Ubuntu Server</a></li>
+              <li><a href="#networking">Put the VM on your LAN</a></li>
+              <li><a href="#hyper-v">Hyper-V and missing CPU features</a></li>
+              <li><a href="#verify">Verification checklist</a></li>
+              <li><a href="#common-problems">Common problems</a></li>
+              <li><a href="#summary">Summary</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <h2 id="introduction">Introduction</h2>
+        <p>
+          A VirtualBox VM is the cheapest way to get a real Linux server on a Windows desktop. The
+          defaults suit a desktop VM you use from its own window, not a headless server you SSH into
+          and run Kubernetes on. Four things in particular trip people up: a wizard that won't
+          continue, an installer that uses only half the disk, a NAT network you can't reach, and a
+          Windows hypervisor that hides CPU instructions from the guest.
+        </p>
+        <p>
+          I hit all four while building the node for my
+          <a href="../projects/self-hosted-llm-k3s.html">self-hosted LLM on k3s</a> project.
+        </p>
+
+        <h2 id="when-useful">When this is useful</h2>
+        <ul>
+          <li>You want a Linux lab server (Kubernetes, Docker, databases) on a Windows PC.</li>
+          <li>You can't SSH into your VM from Windows or from other devices.</li>
+          <li><code>df -h /</code> inside the VM shows about half the disk you gave it.</li>
+          <li>Workloads in the VM are much slower than expected, or <code>/proc/cpuinfo</code> is missing <code>avx2</code>.</li>
+          <li>VirtualBox shows a green turtle icon in the VM's status bar.</li>
+        </ul>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li>Windows 10 or 11 with administrator rights.</li>
+          <li>VirtualBox 7.x and the Ubuntu Server 24.04 LTS ISO (<code>ubuntu-24.04.x-live-server-amd64.iso</code>).</li>
+          <li>Hardware virtualization enabled in the BIOS/UEFI (Intel VT-x or AMD-V/SVM). Check in Task Manager → Performance → CPU → "Virtualization: Enabled".</li>
+          <li>Enough RAM to split between Windows and the VM. On a 16 GB PC, give the VM 8 GB.</li>
+        </ul>
+
+        <h2 id="create-vm">Create the VM</h2>
+        <h3 id="wizard">Name, ISO and unattended install</h3>
+        <ul>
+          <li><strong>The Next button stays grey until the VM has a name.</strong> Selecting the ISO isn't enough.</li>
+          <li><strong>Tick "Skip Unattended Installation".</strong> Unattended mode installs Ubuntu with defaults. You'd miss the installer screens where you enable OpenSSH, choose your user and check the disk layout.</li>
+        </ul>
+
+        <h3 id="sizing">Hardware</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Setting</th><th>Lab server value</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>Base memory</td><td>8192 MB (half of a 16 GB host)</td><td>Leaves Windows enough to stay responsive</td></tr>
+              <tr><td>Processors</td><td>4–6, staying in the green part of the slider</td><td>The green zone is your physical core count. Above it you're overcommitting threads.</td></tr>
+              <tr><td>EFI</td><td>Off</td><td>Not needed for Ubuntu Server</td></tr>
+              <tr><td>Disk</td><td>60 GB, dynamically allocated</td><td>Only uses host space as it fills. Container images and models are large.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="install">Install Ubuntu Server</h2>
+        <ul>
+          <li><strong>Tick "Install OpenSSH server".</strong> You'll manage the VM over SSH, not from the VirtualBox console.</li>
+          <li><strong>Skip the "Featured server snaps".</strong> In particular, don't install <code>microk8s</code> if you plan to run k3s or another Kubernetes distribution. Two distributions compete for the same ports and networking.</li>
+        </ul>
+
+        <h3 id="lvm">The installer only uses about half the disk</h3>
+        <p>
+          With the default "use an entire disk" + LVM layout, the installer creates the volume group
+          on the whole disk but sizes the root logical volume at only part of it. On a 60 GB disk
+          that gave a 28 GB root filesystem, and the rest sat unallocated. You can enlarge
+          <code>ubuntu-lv</code> on the installer's storage screen, or fix it afterwards, live:
+        </p>
+        <pre data-label="check"><code class="language-bash">sudo vgs        # VFree = unallocated space in the volume group
+df -h /</code></pre>
+        <pre class="changes" data-label="grow root to the full disk"><code class="language-bash">sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv   # -r resizes the filesystem as well
+df -h /</code></pre>
+        <div class="callout warn">
+          <span class="callout-title">Why it matters</span>
+          <p>Kubernetes evicts pods once free disk falls below its threshold (around 5% on the root
+          filesystem). With container images and model files on a half-size volume, that happens
+          sooner than you'd expect. My chat UI pod was evicted for exactly this reason.</p>
+        </div>
+
+        <h2 id="networking">Put the VM on your LAN</h2>
+        <p>
+          The default adapter mode is <strong>NAT</strong>. The VM gets a private
+          <code>10.0.2.x</code> address behind VirtualBox, can reach the internet, but can't be
+          reached from Windows or the rest of the network. For a server, use
+          <strong>Bridged Adapter</strong>. The VM then gets an address from your router, on the
+          same subnet as your PC.
+        </p>
+        <ol>
+          <li>Find which physical adapter Windows uses for the LAN. VirtualBox lists adapters by hardware name, not by the "Ethernet 2" connection name:
+            <pre data-label="PowerShell"><code class="language-powershell">Get-NetAdapter | Select Name, InterfaceDescription, Status</code></pre>
+          </li>
+          <li>Power off the VM, then go to Settings → Network → Adapter 1 → <strong>Attached to: Bridged Adapter</strong>, and set <strong>Name</strong> to that InterfaceDescription.</li>
+          <li>Don't pick the <em>VirtualBox Host-Only</em> adapter (a separate <code>192.168.56.x</code> network) or any <em>Hyper-V</em> / <em>vEthernet</em> adapter.</li>
+          <li>Boot the VM and check the address:
+            <pre data-label="in the VM"><code class="language-bash">ip -4 addr show enp0s3     # should be on your LAN subnet, e.g. 192.168.1.x</code></pre>
+          </li>
+        </ol>
+        <p>
+          The address comes from DHCP and can change. Create a <strong>DHCP reservation</strong> on
+          your router for the VM's MAC address (VirtualBox MACs start with <code>08:00:27</code>).
+          Ingress hostnames and bookmarks then keep working.
+        </p>
+
+        <h2 id="hyper-v">Hyper-V and missing CPU features</h2>
+        <p>
+          When any part of the Windows hypervisor is active (Hyper-V, the Virtual Machine Platform
+          used by WSL2, Windows Hypervisor Platform, or Memory Integrity), VirtualBox can't use
+          VT-x/AMD-V directly. It runs the VM through the Windows hypervisor API instead. VirtualBox
+          shows this as a <strong>green turtle</strong> in the VM's status bar. In this mode the
+          guest can lose CPU features. On a Ryzen 7 5700X, which supports AVX2, the guest saw no
+          <code>avx</code>, <code>avx2</code>, <code>fma</code> or <code>f16c</code> at all.
+        </p>
+        <p>
+          That matters for anything vectorized. CPU inference with llama.cpp/Ollama, compression
+          and crypto libraries all fall back to much slower code paths.
+        </p>
+
+        <h3 id="diagnose">Diagnose</h3>
+        <pre data-label="in the VM"><code class="language-bash">grep -o -w 'avx\|avx2\|fma' /proc/cpuinfo | sort -u   # empty = features hidden
+lscpu | grep -i 'model name\|hypervisor'</code></pre>
+        <p>
+          <code>Hypervisor vendor: KVM</code> in <code>lscpu</code> is normal. It's the
+          paravirtualization interface VirtualBox presents to Linux guests, not a problem.
+        </p>
+        <pre data-label="PowerShell (admin)"><code class="language-powershell">Get-WindowsOptionalFeature -Online |
+  Where-Object { $_.FeatureName -match 'Hyper-V|VirtualMachinePlatform|HypervisorPlatform' -and $_.State -eq 'Enabled' } |
+  Select FeatureName
+bcdedit /enum | findstr -i hypervisorlaunchtype</code></pre>
+
+        <h3 id="fix">Fix</h3>
+        <div class="callout warn">
+          <span class="callout-title">Trade-off</span>
+          <p>Turning the Windows hypervisor off disables <strong>WSL2, Docker Desktop, Windows
+          Sandbox and Hyper-V VMs</strong> until you turn it back on. If you depend on those
+          daily, accept the slower VM instead, or run the lab on a different machine.</p>
+        </div>
+        <pre class="changes" data-label="PowerShell (admin)"><code class="language-powershell">Disable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -NoRestart
+Disable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform -NoRestart
+Disable-WindowsOptionalFeature -Online -FeatureName HypervisorPlatform -NoRestart
+bcdedit /set hypervisorlaunchtype off</code></pre>
+        <ol>
+          <li>Also check Windows Security → Device security → Core isolation → <strong>Memory integrity</strong>. If it's on, it keeps the hypervisor loaded. Turn it off.</li>
+          <li>Do a full <strong>Restart</strong> (not Shut down, which Fast Startup turns into hibernation).</li>
+          <li>Start the VM. The turtle should be gone, and <code>/proc/cpuinfo</code> should list <code>avx</code>, <code>avx2</code> and <code>fma</code>.</li>
+        </ol>
+        <p>To undo it later:</p>
+        <pre class="changes" data-label="PowerShell (admin)"><code class="language-powershell">Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All,VirtualMachinePlatform -NoRestart
+bcdedit /set hypervisorlaunchtype auto
+# then restart</code></pre>
+
+        <h2 id="verify">Verification checklist</h2>
+        <pre data-label="in the VM"><code class="language-bash">ip -4 addr show enp0s3                                # LAN address, not 10.0.2.x
+df -h /                                               # root ≈ full disk size
+free -h                                               # RAM as configured
+nproc                                                 # vCPUs as configured
+grep -o -w 'avx\|avx2\|fma' /proc/cpuinfo | sort -u   # avx, avx2, fma
+systemctl is-active ssh                               # active</code></pre>
+        <p>Then from Windows: <code>ssh &lt;user&gt;@&lt;vm-ip&gt;</code>.</p>
+
+        <h2 id="common-problems">Common problems</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+            <tbody>
+              <tr><td>Wizard's Next button is greyed out</td><td>VM name is empty</td><td>Type a name</td></tr>
+              <tr><td>VM has a <code>10.0.2.15</code> address, SSH from Windows times out</td><td>Adapter is NAT</td><td>Switch to Bridged Adapter on the physical NIC</td></tr>
+              <tr><td>Bridged VM gets no address</td><td>Bridged to the wrong adapter (Host-Only, vEthernet, disconnected NIC)</td><td>Match the adapter name from <code>Get-NetAdapter</code></td></tr>
+              <tr><td>VM IP changes after reboot</td><td>DHCP</td><td>DHCP reservation on the router</td></tr>
+              <tr><td><code>df</code> shows about half the disk</td><td>Installer's default LV size</td><td><code>lvextend -r -l +100%FREE</code></td></tr>
+              <tr><td>Green turtle, slow VM, no <code>avx2</code></td><td>Windows hypervisor active</td><td>Disable Hyper-V, VMP and Memory integrity, then restart</td></tr>
+              <tr><td>Still no <code>avx2</code> after <code>bcdedit</code></td><td>A Windows feature or Memory integrity keeps the hypervisor loaded</td><td>Disable the optional features listed above</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2 id="summary">Summary</h2>
+        <ol>
+          <li>Name the VM, skip unattended install, give it 8 GB, 4–6 vCPU and a 60 GB dynamic disk.</li>
+          <li>Install OpenSSH and skip the featured snaps.</li>
+          <li>Grow the root LV to the full disk with <code>lvextend -r</code>.</li>
+          <li>Use a Bridged Adapter on the physical NIC and reserve the IP on your router.</li>
+          <li>If <code>avx2</code> is missing, turn off the Windows hypervisor and restart.</li>
+        </ol>
+
+        <footer class="article-footer">
+          <!-- Previous/next and related articles: rendered by js/article.js from js/kb-articles.js -->
+          <div id="kb-article-nav"></div>
+          <p class="back-link"><a href="../knowledge-base.html">← Back to Knowledge Base</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-powershell.min.js"></script>
+  <script src="../js/motion.js"></script>
+</body>
+</html>

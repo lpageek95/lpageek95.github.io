@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Self-Hosted LLM on Kubernetes (k3s) — Mario Paniagua</title>
+  <meta name="description" content="Running an open-source language model on a single-node k3s cluster: Ollama with persistent storage, Open WebUI behind Traefik ingress, Prometheus and Grafana monitoring, and a real disk-pressure eviction debugged along the way.">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Mario Paniagua">
+  <meta property="og:title" content="Self-Hosted LLM on Kubernetes (k3s)">
+  <meta property="og:description" content="Ollama, Open WebUI, Traefik and Prometheus/Grafana on a single-node k3s cluster, CPU-only, built from scratch on Ubuntu Server 24.04.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="../css/style.css">
+  <link rel="stylesheet" href="../css/motion.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="logo" href="../index.html">~/<span>mario-paniagua</span></a>
+      <nav class="site-nav" aria-label="Main">
+        <ul>
+          <li><a href="../index.html">home</a></li>
+          <li><a href="../projects.html" aria-current="true">projects</a></li>
+          <li><a href="../knowledge-base.html">knowledge-base</a></li>
+          <li><a href="../resume.html">resume</a></li>
+          <li><a href="../about.html">about</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+      <p class="breadcrumb"><a href="../projects.html">~/projects</a> / self-hosted-llm-k3s</p>
+
+      <article class="article prose">
+        <h1>Self-Hosted LLM on Kubernetes (k3s)</h1>
+        <p class="article-meta"><span class="cat">Project</span> · <span class="status-pill">phases 1–4 done · benchmarks next</span> · <span class="published">Started <time datetime="2026-10-21">Oct 21, 2026</time></span></p>
+        <ul class="tags"><li>kubernetes</li><li>k3s</li><li>ollama</li><li>llm</li><li>prometheus</li><li>grafana</li><li>ubuntu</li></ul>
+
+        <p class="lead">
+          An open-source language model served from Kubernetes, the way a platform team would run it:
+          a model server with persistent storage and health checks, a chat UI behind an ingress,
+          resource requests and limits, and Prometheus/Grafana watching all of it. Single node,
+          CPU-only, built from a blank Ubuntu Server install.
+        </p>
+
+        <dl class="project-facts">
+          <dt>stack</dt><dd>Ubuntu Server 24.04 · k3s (Kubernetes 1.36) · Ollama · Open WebUI · Traefik · kube-prometheus-stack</dd>
+          <dt>model</dt><dd><code>llama3.2:3b</code>, Q4_K_M quantization, 2.0 GB</dd>
+          <dt>node</dt><dd>6 vCPU (AVX2), 8 GB RAM, 60 GB disk, no GPU</dd>
+          <dt>result</dt><dd><strong>~18 tokens/s</strong> generation on CPU, OpenAI-compatible API reachable from the LAN</dd>
+        </dl>
+
+        <nav class="toc" aria-label="On this page">
+          <details open>
+            <summary>On this page</summary>
+            <ol>
+              <li><a href="#why">Why this project</a></li>
+              <li><a href="#architecture">Architecture</a></li>
+              <li><a href="#prerequisites">Prerequisites</a></li>
+              <li><a href="#phase-1">Phase 1: Prepare Ubuntu and install k3s</a></li>
+              <li><a href="#phase-2">Phase 2: Model server</a></li>
+              <li><a href="#phase-3">Phase 3: Chat UI and ingress</a></li>
+              <li><a href="#phase-4">Phase 4: Monitoring</a></li>
+              <li><a href="#results">Results</a></li>
+              <li><a href="#incident">Incident: evicted by disk pressure</a></li>
+              <li><a href="#lessons">Lessons learned</a></li>
+              <li><a href="#next">What's next</a></li>
+            </ol>
+          </details>
+        </nav>
+
+        <h2 id="why">Why this project</h2>
+        <p>
+          Most "run an LLM locally" guides stop at <code>ollama run</code>. I wanted to treat the model
+          as a workload: something that gets scheduled, needs storage that survives restarts,
+          competes with other pods for CPU and memory, gets health-checked, and shows up on a
+          dashboard. These are the same concerns I deal with on OpenShift every day, applied to AI
+          inference.
+        </p>
+        <p>
+          Running CPU-only was deliberate. It keeps the lab cheap and reproducible, and it makes
+          the resource limits matter: every token competes for the same six cores.
+        </p>
+
+        <h2 id="architecture">Architecture</h2>
+        <figure class="diagram">
+          <svg viewBox="0 0 760 400" role="img" aria-labelledby="arch-title arch-desc">
+            <title id="arch-title">Architecture of the self-hosted LLM lab</title>
+            <desc id="arch-desc">Clients on the LAN reach Open WebUI and Grafana through the Traefik ingress, and the Ollama API through a NodePort. Open WebUI calls Ollama through cluster DNS. Ollama and Open WebUI store data on local-path persistent volumes. Prometheus scrapes the kubelet, node exporter and kube-state-metrics.</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0,0 L10,5 L0,10 z" fill="#7f9490"/>
+              </marker>
+            </defs>
+            <!-- LAN clients -->
+            <rect x="10" y="20" width="150" height="70" rx="6" fill="#101816" stroke="#3aa6ff"/>
+            <text x="85" y="48" text-anchor="middle" fill="#3aa6ff" font-size="13" font-weight="700">LAN clients</text>
+            <text x="85" y="68" text-anchor="middle" fill="#7f9490" font-size="11">browser · curl · SDKs</text>
+            <!-- node boundary -->
+            <rect x="200" y="10" width="550" height="380" rx="8" fill="none" stroke="#1f2e2a" stroke-dasharray="6 4"/>
+            <text x="215" y="378" fill="#7f9490" font-size="11">k3s node · Ubuntu 24.04</text>
+            <!-- traefik -->
+            <rect x="225" y="50" width="160" height="56" rx="6" fill="#101816" stroke="#3ddc84"/>
+            <text x="305" y="74" text-anchor="middle" fill="#3ddc84" font-size="13" font-weight="700">Traefik ingress</text>
+            <text x="305" y="93" text-anchor="middle" fill="#7f9490" font-size="11">:80 · *.nip.io hosts</text>
+            <!-- ai namespace -->
+            <rect x="415" y="34" width="320" height="206" rx="6" fill="none" stroke="#ffb454" stroke-opacity=".6"/>
+            <text x="427" y="58" fill="#ffb454" font-size="11">namespace: ai</text>
+            <rect x="430" y="68" width="135" height="56" rx="6" fill="#101816" stroke="#3ddc84"/>
+            <text x="497" y="92" text-anchor="middle" fill="#d6e2df" font-size="13" font-weight="700">Open WebUI</text>
+            <text x="497" y="111" text-anchor="middle" fill="#7f9490" font-size="11">chat UI · :8080</text>
+            <rect x="590" y="68" width="135" height="56" rx="6" fill="#101816" stroke="#3ddc84"/>
+            <text x="657" y="92" text-anchor="middle" fill="#d6e2df" font-size="13" font-weight="700">Ollama</text>
+            <text x="657" y="111" text-anchor="middle" fill="#7f9490" font-size="11">model API :11434</text>
+            <rect x="430" y="168" width="135" height="50" rx="6" fill="#0a0f0e" stroke="#1f2e2a"/>
+            <text x="497" y="190" text-anchor="middle" fill="#7f9490" font-size="11">PVC 2Gi</text>
+            <text x="497" y="206" text-anchor="middle" fill="#7f9490" font-size="11">users · chats</text>
+            <rect x="590" y="168" width="135" height="50" rx="6" fill="#0a0f0e" stroke="#1f2e2a"/>
+            <text x="657" y="190" text-anchor="middle" fill="#7f9490" font-size="11">PVC 20Gi</text>
+            <text x="657" y="206" text-anchor="middle" fill="#7f9490" font-size="11">model weights</text>
+            <!-- monitoring namespace -->
+            <rect x="415" y="260" width="320" height="115" rx="6" fill="none" stroke="#3aa6ff" stroke-opacity=".6"/>
+            <text x="427" y="278" fill="#3aa6ff" font-size="11">namespace: monitoring</text>
+            <rect x="430" y="290" width="135" height="56" rx="6" fill="#101816" stroke="#3aa6ff"/>
+            <text x="497" y="314" text-anchor="middle" fill="#d6e2df" font-size="13" font-weight="700">Grafana</text>
+            <text x="497" y="333" text-anchor="middle" fill="#7f9490" font-size="11">dashboards</text>
+            <rect x="590" y="290" width="135" height="56" rx="6" fill="#101816" stroke="#3aa6ff"/>
+            <text x="657" y="314" text-anchor="middle" fill="#d6e2df" font-size="13" font-weight="700">Prometheus</text>
+            <text x="657" y="333" text-anchor="middle" fill="#7f9490" font-size="11">scrapes metrics</text>
+            <!-- arrows -->
+            <line x1="160" y1="70" x2="222" y2="76" stroke="#7f9490" marker-end="url(#arrow)"/>
+            <line x1="385" y1="80" x2="427" y2="94" stroke="#7f9490" marker-end="url(#arrow)"/>
+            <path d="M385 98 C 400 200, 400 300, 427 316" fill="none" stroke="#7f9490" marker-end="url(#arrow)"/>
+            <line x1="565" y1="96" x2="587" y2="96" stroke="#7f9490" marker-end="url(#arrow)"/>
+            <text x="577" y="146" text-anchor="middle" fill="#7f9490" font-size="10">cluster</text>
+            <text x="577" y="158" text-anchor="middle" fill="#7f9490" font-size="10">DNS</text>
+            <line x1="497" y1="124" x2="497" y2="165" stroke="#1f2e2a" stroke-width="2"/>
+            <line x1="657" y1="124" x2="657" y2="165" stroke="#1f2e2a" stroke-width="2"/>
+            <line x1="590" y1="318" x2="568" y2="318" stroke="#7f9490" marker-end="url(#arrow)"/>
+            <path d="M150 20 L 700 22 L 700 65" fill="none" stroke="#7f9490" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+            <text x="440" y="16" fill="#7f9490" font-size="10">NodePort :31434 (API)</text>
+          </svg>
+          <figcaption>Browsers reach the chat UI and Grafana through Traefik. API clients hit Ollama directly on a NodePort. Open WebUI talks to Ollama over cluster DNS, never over the node IP.</figcaption>
+        </figure>
+
+        <h2 id="prerequisites">Prerequisites</h2>
+        <ul>
+          <li><strong>Ubuntu Server 24.04 LTS</strong>, minimal install with OpenSSH. No extra snaps (in particular not microk8s, which would clash with k3s).</li>
+          <li><strong>6 vCPU, 8 GB RAM, 60 GB disk.</strong> 4 vCPU works, just slower. RAM is the real limit: it decides the model size.</li>
+          <li><strong>A CPU that exposes AVX2.</strong> llama.cpp, which Ollama runs on, is several times slower without it. Check with:</li>
+        </ul>
+        <pre data-label="check CPU features"><code class="language-bash">grep -o -w 'avx\|avx2\|fma' /proc/cpuinfo | sort -u   # expect: avx, avx2, fma</code></pre>
+        <div class="callout">
+          <span class="callout-title">Running the node as a VM?</span>
+          <p>Hypervisors don't always pass AVX2 through to the guest. If the flags are missing, see
+          <a href="../articles/virtualbox-ubuntu-vm-windows.html">Running an Ubuntu Server VM on Windows with VirtualBox</a>,
+          which covers the Hyper-V setting that causes it.</p>
+        </div>
+
+        <h2 id="phase-1">Phase 1: Prepare Ubuntu and install k3s</h2>
+        <h3 id="root-volume">Use the whole disk</h3>
+        <p>
+          The Ubuntu Server installer's default LVM layout only gives the root volume about half
+          the disk. Container images are large, so claim the rest before installing anything.
+          Skipping this step caused the <a href="#incident">incident</a> later on.
+        </p>
+        <pre class="changes" data-label="extend root LV to the full disk"><code class="language-bash">sudo vgs                                              # VFree shows the unallocated space
+sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv  # -r grows the filesystem too
+df -h /</code></pre>
+
+        <h3 id="swap">Update and disable swap</h3>
+        <pre class="changes" data-label="system prep"><code class="language-bash">sudo apt update &amp;&amp; sudo apt -y upgrade
+sudo swapoff -a
+sudo sed -i '/swap/ s/^/#/' /etc/fstab
+free -h      # Swap: 0B</code></pre>
+
+        <h3 id="k3s">Install k3s</h3>
+        <p>
+          k3s is a single-binary Kubernetes distribution. It ships with containerd, CoreDNS, the
+          Traefik ingress controller, metrics-server and the <code>local-path</code> storage
+          provisioner. That covers everything this lab needs.
+        </p>
+        <pre class="changes" data-label="install k3s"><code class="language-bash">curl -sfL https://get.k3s.io | sh -
+mkdir -p ~/.kube
+sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown $USER:$USER ~/.kube/config
+export KUBECONFIG=~/.kube/config</code></pre>
+        <pre data-label="verify"><code class="language-bash">kubectl get nodes          # Ready
+kubectl get pods -A        # coredns, traefik, metrics-server, local-path-provisioner Running
+kubectl get storageclass   # local-path (default)</code></pre>
+
+        <h2 id="phase-2">Phase 2: Model server</h2>
+        <p>
+          Ollama runs as a single-replica Deployment. The model weights live on a
+          PersistentVolumeClaim, so a pod restart reloads the model from disk instead of
+          downloading 2 GB again. Design choices:
+        </p>
+        <ul>
+          <li><strong><code>strategy: Recreate</code></strong>: the volume is <code>ReadWriteOnce</code>, so the old pod must release it before the new one starts.</li>
+          <li><strong>Requests sized to real use</strong> (about 3.5 Gi with the model loaded), with headroom in the limit. A pod that uses more than its request is the first candidate for eviction.</li>
+          <li><strong>Readiness and liveness probes</strong> on Ollama's root endpoint, so traffic only arrives once the server answers.</li>
+          <li><strong><code>OLLAMA_KEEP_ALIVE=30m</code></strong> keeps the model in RAM between requests. Otherwise the first request after a quiet period pays the load time again.</li>
+        </ul>
+        <pre data-label="ollama.yaml"><code class="language-yaml">apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: ai
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - containerPort: 11434
+          env:
+            - name: OLLAMA_KEEP_ALIVE
+              value: "30m"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 3584Mi
+            limits:
+              cpu: "6"
+              memory: 6Gi
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          readinessProbe:
+            httpGet: { path: /, port: 11434 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 11434 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: ai
+spec:
+  type: NodePort
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+      nodePort: 31434</code></pre>
+        <pre class="changes" data-label="deploy, pull the model, test"><code class="language-bash">kubectl apply -f ollama.yaml
+kubectl -n ai rollout status deploy/ollama
+kubectl -n ai exec deploy/ollama -- ollama pull llama3.2:3b
+
+# OpenAI-compatible endpoint, from any machine on the LAN
+curl -s http://&lt;node-ip&gt;:31434/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"llama3.2:3b","messages":[{"role":"user","content":"Explain a Kubernetes pod in one sentence."}]}'</code></pre>
+        <p>
+          Because the endpoint speaks the OpenAI API, any existing OpenAI client library can use
+          the cluster by changing its base URL.
+        </p>
+
+        <h2 id="phase-3">Phase 3: Chat UI and ingress</h2>
+        <p>
+          Open WebUI provides a ChatGPT-style interface with user accounts. It reaches Ollama
+          through the Service's cluster DNS name. The UI is published through k3s's built-in Traefik
+          using a <code>nip.io</code> hostname, a free wildcard DNS service where
+          <code>chat.&lt;ip&gt;.nip.io</code> resolves to <code>&lt;ip&gt;</code>. That gives
+          name-based routing with no DNS server to run.
+        </p>
+        <pre data-label="open-webui.yaml"><code class="language-yaml">apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-webui-data
+  namespace: ai
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  namespace: ai
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-webui
+  template:
+    metadata:
+      labels:
+        app: open-webui
+    spec:
+      containers:
+        - name: open-webui
+          image: ghcr.io/open-webui/open-webui:main
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OLLAMA_BASE_URL
+              value: "http://ollama.ai.svc.cluster.local:11434"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: data
+              mountPath: /app/backend/data
+          startupProbe:            # first start downloads assets, give it 5 minutes
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: open-webui-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  namespace: ai
+spec:
+  selector:
+    app: open-webui
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: open-webui
+  namespace: ai
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: chat.&lt;node-ip&gt;.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: open-webui
+                port:
+                  number: 80</code></pre>
+        <p>
+          The first deploy used a 512 Mi request and a 1.5 Gi limit. In practice Open WebUI sat at
+          about 1.15 Gi, because it loads a small embedding model for document search. It was right
+          at its limit, so I raised both values to the ones shown here.
+        </p>
+
+        <h2 id="phase-4">Phase 4: Monitoring</h2>
+        <p>
+          The standard <code>kube-prometheus-stack</code> Helm chart, trimmed down for a small node:
+          no Alertmanager, three days of retention, a 30-second scrape interval, and memory caps on
+          Prometheus and Grafana. The control-plane scrape jobs are disabled because k3s runs
+          etcd, the scheduler, the controller manager and kube-proxy inside one process. The default
+          jobs would only show permanently "down" targets.
+        </p>
+        <pre data-label="monitoring-values.yaml"><code class="language-yaml">alertmanager:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    scrapeInterval: 30s
+    resources:
+      requests: { cpu: 200m, memory: 512Mi }
+      limits: { memory: 1Gi }
+grafana:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    hosts:
+      - grafana.&lt;node-ip&gt;.nip.io</code></pre>
+        <pre class="changes" data-label="install"><code class="language-bash">helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  -n monitoring --create-namespace -f monitoring-values.yaml
+
+# Grafana admin password
+kubectl -n monitoring get secret monitoring-grafana \
+  -o jsonpath='{.data.admin-password}' | base64 -d; echo</code></pre>
+        <p>
+          The built-in <strong>Kubernetes / Compute Resources / Namespace (Pods)</strong> dashboard,
+          filtered to the <code>ai</code> namespace, shows every request the model handles:
+        </p>
+        <figure class="shot">
+          <img src="../images/projects/llm-k3s-grafana-cpu.png" width="1188" height="256" loading="lazy"
+               alt="Grafana CPU usage panel: the Ollama pod rises from idle to about 2.5 cores while generating a long answer, then falls back. Open WebUI stays near zero.">
+          <figcaption>CPU: Ollama climbs while it generates and falls back when the answer ends. Grafana averages CPU over its rate window, so short bursts look lower here than the near-100% node peaks that <code>kubectl top</code> catches live.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="../images/projects/llm-k3s-grafana-memory.png" width="1187" height="258" loading="lazy"
+               alt="Grafana memory usage panel: Ollama jumps from near zero to about 3 GiB when the model loads; Open WebUI holds steady around 680 MiB.">
+          <figcaption>Memory: the step to about 3 GiB is the model loading into RAM on the first prompt after a pod restart. The model came from the persistent volume, not a new download.</figcaption>
+        </figure>
+        <p>
+          Ollama doesn't publish Prometheus metrics of its own (tokens per second, queue depth).
+          These dashboards cover resource use. Model performance is measured separately; see
+          <a href="#next">what's next</a>.
+        </p>
+
+        <h2 id="results">Results</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Metric</th><th>Value</th><th>How it was measured</th></tr></thead>
+            <tbody>
+              <tr><td>Generation speed</td><td><strong>17.9 tokens/s</strong></td><td><code>ollama run --verbose</code>, eval rate</td></tr>
+              <tr><td>Prompt processing</td><td>60 tokens/s</td><td><code>ollama run --verbose</code>, prompt eval rate</td></tr>
+              <tr><td>Ollama memory (model loaded)</td><td>~3.0 GiB</td><td><code>kubectl top pods</code> / Grafana</td></tr>
+              <tr><td>Open WebUI memory</td><td>0.7–1.15 GiB</td><td><code>kubectl top pods</code> / Grafana</td></tr>
+              <tr><td>Node CPU while generating</td><td>93% (5.6 of 6 cores)</td><td><code>kubectl top node</code></td></tr>
+              <tr><td>Node memory, full stack</td><td>5.3 of 7.8 GiB (66%)</td><td><code>kubectl top node</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          With 8 GB, models of 1–3B parameters are the right size. A 7–8B model needs 5–6 GB on its
+          own, and the monitoring stack would no longer fit next to it.
+        </p>
+        <div class="callout warn">
+          <span class="callout-title">An observation about small models</span>
+          <p>Asked to "generate some load", the model wrote a Python load-test script and said it
+          would "wait for confirmation before stopping the simulation". A chat model can't execute
+          anything. The CPU spike in Grafana came from generating that answer. The script also
+          pointed at <code>example.com</code>. The model will confidently describe capabilities it
+          doesn't have, which is why the platform's own telemetry is the source of truth.</p>
+        </div>
+
+        <h2 id="incident">Incident: evicted by disk pressure</h2>
+        <p>
+          Right after the monitoring stack was installed, the chat UI went down. Ollama was still
+          running, but Open WebUI showed one pod in <code>Error</code> and a replacement stuck in
+          <code>ContainerCreating</code>.
+        </p>
+        <dl class="scenario">
+          <dt>Symptom</dt>
+          <dd>Two pods from the same ReplicaSet: one <code>Error</code>, one <code>ContainerCreating</code> for over 9 minutes.</dd>
+          <dt>First hypothesis (wrong)</dt>
+          <dd>Memory pressure. The timing matched the Prometheus install, and Open WebUI was running above its memory request. But <code>MemoryPressure</code> was <code>False</code>.</dd>
+          <dt>Evidence</dt>
+          <dd>
+            <code>kubectl describe pod</code> on the failed pod: <code>Reason: Evicted</code>,
+            "The node was low on resource: <strong>ephemeral-storage</strong>". Node events:
+            <code>EvictionThresholdMet</code> and "Insufficient free disk space … 86% of
+            <strong>28.4 GiB</strong> used" on a node that had been given a 60 GB disk.
+          </dd>
+          <dt>Root cause</dt>
+          <dd>
+            The Ubuntu installer had put the root filesystem on an LVM volume using only about half
+            the disk. Container images (Open WebUI alone is several GB), the model and the
+            monitoring stack filled it. The kubelet evicted a pod and garbage-collected unused
+            images, including Open WebUI's, so the replacement pod had to download it again. That
+            download filled the disk a second time.
+          </dd>
+          <dt>Fix</dt>
+          <dd>
+            <code>lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv</code>, done live with no
+            reboot. Disk usage dropped to 31%. The node kept its
+            <code>node.kubernetes.io/disk-pressure:NoSchedule</code> taint for a few more minutes,
+            because the kubelet waits out a 5-minute pressure-transition period before clearing
+            the condition. After that the pod scheduled, finished the pull and came up. Accounts
+            and chats were intact on the PVC.
+          </dd>
+        </dl>
+        <pre data-label="the commands that found it"><code class="language-bash">kubectl -n ai describe pod &lt;failed-pod&gt; | grep -iE 'reason|message|status:'
+kubectl describe node &lt;node&gt; | grep -A7 'Conditions:'
+kubectl describe node &lt;node&gt; | grep -i taints
+kubectl get events -A --sort-by=.lastTimestamp | tail -15
+df -h /</code></pre>
+
+        <h2 id="lessons">Lessons learned</h2>
+        <ul>
+          <li><strong>Read the eviction reason before forming a theory.</strong> The timing pointed to memory. The pod status said disk.</li>
+          <li><strong>Check <code>df -h /</code> against the disk you provisioned.</strong> The installer's LVM default is easy to miss and costs half the space.</li>
+          <li><strong>Set requests to what pods actually use.</strong> Pods running above their request are evicted first. Both workloads were above theirs.</li>
+          <li><strong>Evictions have side effects.</strong> Image garbage collection turned a quick restart into a multi-GB download.</li>
+          <li><strong>CPU features matter for CPU inference.</strong> Without AVX2 the same model runs several times slower. Check <code>/proc/cpuinfo</code> first.</li>
+        </ul>
+
+        <h2 id="next">What's next</h2>
+        <ul>
+          <li><strong>Benchmark job:</strong> a Kubernetes Job that sends a fixed set of prompts at concurrency 1 and 4 and reports latency (p50/p95), per-request tokens/s and total throughput.</li>
+          <li><strong>GPU comparison:</strong> the same Deployment pattern serving the model with vLLM on a GPU node, compared against these CPU numbers.</li>
+          <li><strong>Hardening:</strong> pinned image tags, TLS on the ingress, a NetworkPolicy so only Open WebUI and the ingress can reach Ollama.</li>
+          <li><strong>Repository:</strong> publish the manifests and benchmark script on GitHub.</li>
+        </ul>
+
+        <footer class="article-footer">
+          <p class="muted">Related on this site:
+            <a href="../articles/troubleshooting-pods-not-running.html">Troubleshooting pods that are not running</a> ·
+            <a href="../articles/kubernetes-pod-scheduling.html">Taints, tolerations and pod scheduling</a> ·
+            <a href="../articles/linux-disk-space-troubleshooting.html">Linux disk space troubleshooting</a>
+          </p>
+          <p class="back-link"><a href="../projects.html">← Back to Projects</a></p>
+        </footer>
+      </article>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>© 2026 Mario Paniagua</span>
+      <ul>
+        <li><a href="https://github.com/lpageek95">github</a></li>
+        <li><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></li>
+      </ul>
+    </div>
+  </footer>
+
+  <script src="../js/kb-articles.js"></script>
+  <script src="../js/article.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-yaml.min.js"></script>
+  <script src="../js/motion.js"></script>
+</body>
+</html>

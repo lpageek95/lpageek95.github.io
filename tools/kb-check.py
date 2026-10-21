@@ -180,7 +180,8 @@ class PageParser(HTMLParser):
 
 
 def check_pages():
-    pages = sorted(glob.glob(os.path.join(ROOT, "*.html")) + glob.glob(os.path.join(ROOT, "articles", "*.html")))
+    pages = sorted(glob.glob(os.path.join(ROOT, "*.html")) + glob.glob(os.path.join(ROOT, "articles", "*.html"))
+                   + glob.glob(os.path.join(ROOT, "projects", "*.html")))
     parsed = {}
     for p in pages:
         rel = os.path.relpath(p, ROOT).replace(os.sep, "/")

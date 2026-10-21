@@ -47,7 +47,7 @@ python -m http.server 8000
 
 - **Bio**: teaser in `index.html`, full version in `about.html`.
 - **Resume**: `resume.html` (kept in sync with the CV by hand).
-- **Projects**: `projects.html` shows an under-construction notice plus featured links (KB, latest article, resume) until the first project ships.
+- **Projects**: cards in `projects.html`; each project has its own page in `projects/` (same article layout, checked by `tools/kb-check.py`). Images live in `images/projects/`.
 
 Contact links (GitHub + LinkedIn, no email by design) appear in the footer of
 every page, in `about.html#contact`, and in the `CONTACT` array at the top of
@@ -123,7 +123,7 @@ every page, in `about.html#contact`, and in the `CONTACT` array at the top of
 
 | Field | Rule |
 |---|---|
-| **category** | Exactly one, from `KB_CATEGORIES`: Kubernetes, OpenShift, Linux, DNS, Security, Networking, Storage, Containers, Automation, Monitoring, Crypto. Filter buttons only appear for categories that have articles. To add a new category, append it to `KB_CATEGORIES`. |
+| **category** | Exactly one, from `KB_CATEGORIES`: Kubernetes, OpenShift, Linux, DNS, Security, Networking, Storage, Containers, Automation, Monitoring, Crypto, Virtualization. Filter buttons only appear for categories that have articles. To add a new category, append it to `KB_CATEGORIES`. |
 | **Kubernetes vs OpenShift** | Use **Kubernetes** when the content applies to both (and add the `openshift` tag). Use the **OpenShift** category only for OpenShift-only features (SCCs, Routes, Operators/OLM, MachineSets). |
 | **Linux vs RHEL** | Linux is the category, and `rhel` is a tag for RHEL-specific content (dnf, NetworkManager, SELinux defaults). |
 | **tags** | Lowercase, 2–5 per article, shown as clickable `#tag` filters. Reuse existing tags where possible: kubernetes, openshift, linux, rhel, dns, security, troubleshooting, system administration, devops. |

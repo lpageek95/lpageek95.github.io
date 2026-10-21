@@ -23,7 +23,7 @@
 window.KB_CATEGORIES = [
   "Kubernetes", "OpenShift", "Linux", "DNS", "Security",
   "Networking", "Storage", "Containers", "Automation", "Monitoring",
-  "Crypto"
+  "Crypto", "Virtualization"
 ];
 
 window.KB_ARTICLES = [
@@ -91,5 +91,18 @@ window.KB_ARTICLES = [
     "updated": "",
     "keywords": "bitcoin core bitcoind bitcoin-cli full node btc blockchain docker compose dockerfile container sha256sums gpg guix.sigs verify signature port 8333 rpc 8332 bitcoin.conf dbcache prune ibd initial block download sync getblockchaininfo getnetworkinfo genesis block satoshi bitnodes self-hosting",
     "related": []
+  },
+  {
+    "slug": "virtualbox-ubuntu-vm-windows",
+    "title": "Running an Ubuntu Server VM on Windows with VirtualBox",
+    "description": "Set up an Ubuntu Server lab VM in VirtualBox on Windows: wizard gotchas, the installer's half-disk LVM default, bridged networking, and the Hyper-V setting that hides AVX2 from the guest.",
+    "category": "Virtualization",
+    "tags": ["virtualbox", "windows", "hyper-v", "ubuntu", "networking"],
+    "level": "beginner",
+    "minutes": 7,
+    "published": "2026-10-21",
+    "updated": "",
+    "keywords": "virtualbox vbox vm virtual machine windows 10 11 hyper-v wsl2 virtual machine platform hypervisor platform bcdedit hypervisorlaunchtype memory integrity core isolation green turtle nem avx avx2 fma cpu flags proc cpuinfo lscpu bridged adapter nat host-only 10.0.2.15 get-netadapter dhcp reservation ubuntu server 24.04 lvm lvextend ubuntu-lv vgs openssh unattended installation",
+    "related": ["linux-disk-space-troubleshooting"]
   }
 ];

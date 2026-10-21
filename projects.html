@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Projects — Mario Paniagua</title>
-  <meta name="description" content="Projects in infrastructure, Kubernetes/OpenShift, networking and AI. First project in progress.">
+  <meta name="description" content="Projects in infrastructure, Kubernetes/OpenShift, networking and AI: a self-hosted LLM on k3s and more.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
@@ -30,18 +30,15 @@
   <main>
     <div class="container">
       <h1 class="prompt">ls ~/projects</h1>
-      <section class="construction" aria-label="Projects under construction">
-        <p class="warn-line">ls: cannot access '~/projects': No such file or directory</p>
-        <pre class="build-log" aria-hidden="true">$ git status
-On branch main
-<span class="accent">first-project/</span>: work in progress, not committed yet
-$ ./deploy.sh
-<span class="muted">waiting for first-project ... queued</span></pre>
-        <p>
-          The first hands-on project is being built right now. Check back soon.
-          Until then, here's what is already on the site.
-        </p>
-      </section>
+      <p class="muted">Hands-on builds, written up end to end.</p>
+
+      <div class="grid">
+        <a class="card project-card" href="projects/self-hosted-llm-k3s.html">
+          <h3>self-hosted-llm-k3s<span class="badge">wip</span></h3>
+          <p>An open-source LLM served from a single-node k3s cluster: Ollama with persistent storage, Open WebUI behind Traefik ingress, Prometheus and Grafana monitoring, and a disk-pressure eviction debugged along the way. About 18 tokens/s on CPU.</p>
+          <ul class="tags"><li>kubernetes</li><li>k3s</li><li>ollama</li><li>grafana</li></ul>
+        </a>
+      </div>
 
       <h2 class="prompt">ls ~/related --featured</h2>
       <div class="grid">
@@ -50,10 +47,10 @@ $ ./deploy.sh
           <p>Practical runbooks on Kubernetes/OpenShift, Linux, DNS, and self-hosted infrastructure, with search and filters.</p>
           <ul class="tags"><li>kubernetes</li><li>linux</li><li>dns</li></ul>
         </a>
-        <a class="card" href="articles/bitcoin-node-docker-ubuntu.html">
+        <a class="card" href="articles/virtualbox-ubuntu-vm-windows.html">
           <h3>latest article<span class="badge">kb</span></h3>
-          <p>Running a Bitcoin full node on Ubuntu with Bitcoin Core in Docker: verified build, persistent storage, and sync monitoring.</p>
-          <ul class="tags"><li>docker</li><li>ubuntu</li><li>self-hosted</li></ul>
+          <p>Running an Ubuntu Server VM on Windows with VirtualBox: bridged networking, the half-disk LVM default, and the Hyper-V setting that hides AVX2.</p>
+          <ul class="tags"><li>virtualbox</li><li>hyper-v</li><li>ubuntu</li></ul>
         </a>
         <a class="card" href="resume.html">
           <h3>resume.txt<span class="badge">cv</span></h3>
