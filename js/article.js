@@ -37,38 +37,106 @@
     });
   }
 
-  // Command/config blocks get a button; simulated output (pre.output) does not.
-  Array.prototype.forEach.call(document.querySelectorAll(".prose pre:not(.output)"), function (pre) {
+  /* ---------- code windows ----------
+     Every .prose pre becomes a small terminal-style window: a title bar with the
+     block's label and language, a Wrap toggle (only when lines overflow) and a
+     Copy button (not on simulated output). Without JS the plain <pre> still works. */
+  var LANGS = { bash: "bash", yaml: "yaml", powershell: "powershell", ini: "ini",
+                docker: "dockerfile", json: "json", text: "text" };
+  var WRAP_KEY = "kb-code-wrap";
+  var wrapAll = false;
+  try { wrapAll = localStorage.getItem(WRAP_KEY) === "1"; } catch (e) { /* storage unavailable */ }
+
+  var blocks = [];
+
+  function setWrap(on) {
+    wrapAll = on;
+    try { localStorage.setItem(WRAP_KEY, on ? "1" : "0"); } catch (e) { /* ignore */ }
+    blocks.forEach(function (b) {
+      b.wrap.classList.toggle("wrap", on);
+      b.wrapBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    updateWrapButtons();
+  }
+
+  function updateWrapButtons() {
+    blocks.forEach(function (b) {
+      var overflows = b.pre.scrollWidth > b.pre.clientWidth + 2;
+      b.wrapBtn.hidden = !(overflows || wrapAll);
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".prose pre"), function (pre) {
     var code = pre.querySelector("code");
     if (!code) return;
+    var isOutput = pre.classList.contains("output");
 
     var wrap = el("div", "code-block");
+    if (pre.classList.contains("changes")) wrap.classList.add("changes");
+    if (isOutput) wrap.classList.add("output");
+    if (wrapAll) wrap.classList.add("wrap");
     pre.parentNode.insertBefore(wrap, pre);
-    wrap.appendChild(pre);
 
-    var btn = el("button", "copy-btn", "Copy");
-    btn.type = "button";
-    btn.setAttribute("aria-label", "Copy code to clipboard");
-    wrap.appendChild(btn);
+    var head = el("div", "code-head");
+    var dots = el("span", "code-dots");
+    dots.setAttribute("aria-hidden", "true");
+    dots.appendChild(el("span")); dots.appendChild(el("span")); dots.appendChild(el("span"));
+    head.appendChild(dots);
 
-    var timer;
-    btn.addEventListener("click", function () {
-      copyText(code.textContent.replace(/\n+$/, "")).then(function () {
-        btn.textContent = "Copied!";
-        btn.classList.add("copied");
-        live.textContent = "Copied to clipboard";
-      }, function () {
-        btn.textContent = "Failed";
-        live.textContent = "Copy failed. Select the text manually.";
+    var m = /language-([a-z]+)/.exec(code.className || "");
+    var lang = m ? (LANGS[m[1]] || m[1]) : "";
+    var label = pre.getAttribute("data-label") || (isOutput ? "output" : lang || "code");
+    head.appendChild(el("span", "code-title", label));
+    if (lang && lang !== "text" && label.toLowerCase() !== lang) head.appendChild(el("span", "code-lang", lang));
+
+    var actions = el("span", "code-actions");
+    var wrapBtn = el("button", "code-btn wrap-btn", "Wrap");
+    wrapBtn.type = "button";
+    wrapBtn.setAttribute("aria-pressed", wrapAll ? "true" : "false");
+    wrapBtn.setAttribute("aria-label", "Wrap long lines in code blocks");
+    wrapBtn.addEventListener("click", function () { setWrap(!wrapAll); });
+    actions.appendChild(wrapBtn);
+
+    if (!isOutput) {
+      var btn = el("button", "code-btn copy-btn", "Copy");
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Copy code to clipboard");
+      var timer;
+      btn.addEventListener("click", function () {
+        copyText(code.textContent.replace(/\n+$/, "")).then(function () {
+          btn.textContent = "Copied!";
+          btn.classList.add("copied");
+          live.textContent = "Copied to clipboard";
+        }, function () {
+          btn.textContent = "Failed";
+          live.textContent = "Copy failed. Select the text manually.";
+        });
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          btn.textContent = "Copy";
+          btn.classList.remove("copied");
+          live.textContent = "";
+        }, 1800);
       });
-      clearTimeout(timer);
-      timer = setTimeout(function () {
-        btn.textContent = "Copy";
-        btn.classList.remove("copied");
-        live.textContent = "";
-      }, 1800);
-    });
+      actions.appendChild(btn);
+    }
+    head.appendChild(actions);
+
+    wrap.appendChild(head);
+    wrap.appendChild(pre);
+    blocks.push({ wrap: wrap, pre: pre, wrapBtn: wrapBtn });
   });
+
+  if (blocks.length) {
+    updateWrapButtons();
+    var resizeTimer;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(updateWrapButtons, 150);
+    });
+    // Web fonts change line widths once they load
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(updateWrapButtons);
+  }
 
   /* ---------- previous / next + related ---------- */
   var articles = window.KB_ARTICLES || [];

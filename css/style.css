@@ -431,20 +431,85 @@ kbd {
 .toc details > summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .toc a { display: inline-block; padding: .1rem 0; }
 
-/* Copy buttons (added by js/article.js) */
-.code-block { position: relative; margin: .8rem 0 1.2rem; }
-.code-block > pre { margin: 0; }
-.code-block > pre[data-label]::before { padding-right: 4.8rem; }
-.copy-btn {
-  position: absolute;
-  top: .4rem;
-  right: .45rem;
-  font-size: .72rem;
-  padding: .1rem .55rem;
-  color: var(--muted);
-  background: var(--bg-raised);
+/* Code windows (built by js/article.js around every .prose pre) */
+.code-block {
+  position: relative;
+  margin: 1rem 0 1.5rem;
+  background: #060a09;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .35);
 }
+.code-block.changes { border-color: rgba(255, 180, 84, .4); }
+.code-head {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  min-height: 2.3rem;
+  padding: .35rem .5rem .35rem .8rem;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font);
+  font-size: .72rem;
+  line-height: 1.3;
+}
+.code-dots { display: inline-flex; gap: 5px; flex: none; }
+.code-dots span { width: 9px; height: 9px; border-radius: 50%; background: var(--border); }
+.code-dots span:nth-child(1) { background: #ff5f56; }
+.code-dots span:nth-child(2) { background: var(--amber); }
+.code-dots span:nth-child(3) { background: var(--green); }
+.code-block.output .code-dots span { background: var(--border); }
+.code-title {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-block.changes .code-title { color: var(--amber); }
+.code-lang {
+  flex: none;
+  color: var(--blue);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 .4rem;
+}
+.code-actions { display: inline-flex; gap: .35rem; flex: none; }
+.code-btn {
+  font: inherit;
+  font-size: .72rem;
+  padding: .15rem .6rem;
+  cursor: pointer;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.code-btn:hover, .code-btn:focus-visible { color: var(--green); border-color: var(--green); }
+.code-btn[aria-pressed="true"] { color: var(--bg); background: var(--blue); border-color: var(--blue); }
 .copy-btn.copied { color: var(--green); border-color: var(--green); }
+.code-block > pre {
+  margin: 0;
+  border: 0;
+  border-left: 3px solid var(--blue);
+  border-radius: 0;
+  background: transparent;
+}
+.code-block.changes > pre { border-left-color: var(--amber); }
+.code-block.output > pre { border-left-color: var(--border); }
+.code-block > pre[data-label]::before { display: none; }
+.code-block.wrap > pre, .code-block.wrap > pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-block > pre::-webkit-scrollbar { height: 8px; }
+.code-block > pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.code-block > pre { scrollbar-color: var(--border) transparent; scrollbar-width: thin; }
+/* On wide screens code windows use the full page width, not just the text column */
+@media (min-width: 900px) {
+  .prose > .code-block { width: min(calc(var(--maxw) - 32px), calc(100vw - 48px)); }
+}
 
 /* Previous / next and related (added by js/article.js) */
 .article-pager {

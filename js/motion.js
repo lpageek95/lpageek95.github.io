@@ -156,7 +156,7 @@
   if (!reduceMotion && "IntersectionObserver" in window) {
     var targets = document.querySelectorAll(
       ".hero, .terminal, main h2, .job, main .grid:not(#kb-grid) > .card, .kb-stats, .kb-controls," +
-      " .prose > p, .prose > ul, .prose > ol, .prose > .callout, .prose > .table-wrap, .prose > pre," +
+      " .prose > p, .prose > ul, .prose > ol, .prose > .callout, .prose > .table-wrap, .prose > pre, .prose > .code-block," +
       " .prose .scenario, .toc, .article-footer"
     );
     var io = new IntersectionObserver(function (entries) {
