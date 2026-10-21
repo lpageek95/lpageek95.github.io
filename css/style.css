@@ -479,29 +479,6 @@ kbd {
 .token.important, .token.bold { font-weight: 700; }
 
 /* ==========================================================================
-   Under-construction block (resume page)
-   ========================================================================== */
-.construction {
-  border: 1px dashed var(--amber);
-  border-radius: 6px;
-  padding: 1.2rem;
-  max-width: 65ch;
-}
-.construction .warn-line { color: var(--amber); font-weight: 700; margin-top: 0; }
-.construction p:last-child { margin-bottom: 0; }
-.build-log {
-  margin: 0 0 1rem;
-  padding: .8rem 1rem;
-  background: #050807;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font: inherit;
-  font-size: .85rem;
-  overflow-x: auto;
-}
-.build-log .ok { color: var(--green); }
-
-/* ==========================================================================
    Terminal widget
    ========================================================================== */
 .terminal {
@@ -592,4 +569,39 @@ kbd {
   .kb-search-prompt { display: none; }
   .kb-stats-list { grid-template-columns: 1fr; }
   .kb-stats-list dd { margin-bottom: .25rem; }
+}
+
+/* ==========================================================================
+   Resume page
+   ========================================================================== */
+.resume-head { margin: 0 0 .5rem; }
+.resume-name { font-size: 1.35rem; font-weight: 700; color: var(--text); margin: .4rem 0 0; }
+.resume-role { color: var(--blue); margin: .1rem 0 .3rem; }
+.resume-links { display: flex; flex-wrap: wrap; gap: .2rem 1.2rem; margin: 0; font-size: .9rem; }
+.resume-summary { max-width: 75ch; }
+.skills dt { white-space: nowrap; }
+
+.timeline { list-style: none; margin: 0; padding: 0 0 0 1.1rem; border-left: 1px solid var(--border); }
+.job { position: relative; margin: 0 0 1.6rem; }
+.job::before {
+  content: "";
+  position: absolute;
+  left: calc(-1.1rem - 5px);
+  top: .45rem;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--green);
+}
+.job:first-child::before { background: var(--green); }
+.job h3 { font-size: 1rem; }
+.job-meta { font-size: .85rem; color: var(--muted); margin: 0 0 .4rem; }
+.job-meta > span { white-space: nowrap; }
+.job ul { margin: 0; padding-left: 1.1rem; max-width: 80ch; }
+.job ul li { margin: .2rem 0; font-size: .92rem; }
+.job ul li::marker { color: var(--green); }
+
+@media (max-width: 560px) {
+  .kv.skills { grid-template-columns: 1fr; gap: 0; }
+  .kv.skills dd { margin-bottom: .6rem; }
 }

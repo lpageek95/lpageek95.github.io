@@ -13,7 +13,7 @@ index.html            home: hero, bio teaser, interactive terminal
 projects.html         project cards
 knowledge-base.html   knowledge-base index: stats, search, filters, cards (rendered by JS)
 articles/*.html       knowledge-base articles
-resume.html           resume (under construction for now)
+resume.html           resume
 about.html            full bio, focus areas, contact (#contact)
 css/style.css         shared theme (colors are CSS variables on :root)
 css/motion.css        animations: page transitions, menus, reveals, reading progress, boot intro
@@ -43,13 +43,11 @@ python -m http.server 8000
 # then visit http://localhost:8000
 ```
 
-## Placeholders to fill in
+## Content
 
-Search the project for `TODO`. The main ones:
-
-- **Bio** — teaser in `index.html`, full version in `about.html`.
-- **Resume** — `resume.html` currently shows an under-construction notice.
-- **Projects** — 4 placeholder cards in `projects.html`.
+- **Bio**: teaser in `index.html`, full version in `about.html`.
+- **Resume**: `resume.html` (kept in sync with the CV by hand).
+- **Projects**: cards in `projects.html`.
 
 Contact links (GitHub + LinkedIn, no email by design) appear in the footer of
 every page, in `about.html#contact`, and in the `CONTACT` array at the top of

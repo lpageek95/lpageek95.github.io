@@ -51,8 +51,8 @@
     },
     whoami: function () {
       print("mario paniagua", "ok");
-      print("sysadmin / platform engineer: unix, openshift, kubernetes,");
-      print("networking, vmware (tanzu), and ai tinkering.");
+      print("unix / openshift systems administrator, costa rica.");
+      print("10+ years: juniper tac -> vmware tanzu -> production openshift.");
       print("type 'about' for the full story.", "muted");
     },
     about: function () { go("about.html", "about.html"); },

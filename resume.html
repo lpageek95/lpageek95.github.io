@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Resume — Mario Paniagua</title>
-  <meta name="description" content="Resume of Mario Paniagua — currently being updated.">
+  <meta name="description" content="Resume of Mario Paniagua: UNIX / OpenShift systems administrator with 10+ years in Linux, Kubernetes, VMware Tanzu, and networking.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
@@ -31,19 +31,104 @@
     <div class="container">
       <h1 class="prompt">cat resume.txt</h1>
 
-      <!-- TODO: replace this block with the real resume (and optionally a resume.pdf download) -->
-      <section class="construction" aria-label="Under construction">
-        <p class="warn-line">[!] 503: resume is being rebuilt</p>
-        <pre class="build-log" aria-hidden="true">$ make resume
-[1/3] collecting experience ........ <span class="ok">done</span>
-[2/3] updating skills .............. <span class="accent">in progress</span>
-[3/3] rendering resume.pdf ......... <span class="muted">queued</span></pre>
-        <p>
-          I'm updating my resume right now. Check back soon. In the meantime you can
-          see my <a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">LinkedIn profile</a>
-          or my work on <a href="https://github.com/lpageek95">GitHub</a>.
+      <header class="resume-head">
+        <p class="resume-name">Mario Paniagua</p>
+        <p class="resume-role">UNIX / OpenShift Systems Administrator · Platform Operations</p>
+        <p class="muted resume-links">
+          <span>Costa Rica</span>
+          <span><a href="https://github.com/lpageek95">github</a></span>
+          <span><a href="https://www.linkedin.com/in/mario-paniagua-47815b133/">linkedin</a></span>
         </p>
-      </section>
+      </header>
+
+      <h2 class="prompt">cat summary.txt</h2>
+      <p class="resume-summary">
+        UNIX/OpenShift systems administrator with 10+ years of experience across enterprise
+        infrastructure, Linux/UNIX, Kubernetes and OpenShift, networking, security, and technical
+        product support. Experienced in production platform operations, complex troubleshooting,
+        Git-managed infrastructure, automation, and cross-functional incident resolution. Previously
+        supported enterprise VMware Tanzu environments, including Fortune 500 customers. I use AI
+        tools such as Claude, Gemini, and ChatGPT to speed up research, scripting, troubleshooting,
+        and documentation.
+      </p>
+
+      <h2 class="prompt">cat skills.txt</h2>
+      <dl class="kv skills">
+        <dt>platforms</dt>
+        <dd>RHEL, Ubuntu, Oracle Linux, UNIX/Linux, VMware vSphere, Microsoft Azure, Linode, Dell physical servers</dd>
+        <dt>containers</dt>
+        <dd>Red Hat OpenShift, Kubernetes, VMware Tanzu TKGi / TKGm / TMC, NSX-T, vSphere</dd>
+        <dt>automation</dt>
+        <dd>Ansible, Git / GitHub, Git-based infrastructure workflows, Bash, Python (basic), YAML, JSON, MAUI, patching, upgrades, vulnerability remediation</dd>
+        <dt>monitoring</dt>
+        <dd>Grafana, Prometheus, logs and alerts, tcpdump, dig, nslookup, traceroute, mtr, sar</dd>
+        <dt>networking</dt>
+        <dd>BIND DNS, TCP/IP, DNS, DHCP, HTTP/S, SSH, local firewall policies, BGP, OSPF, RIP, GPON / xDSL</dd>
+        <dt>ai &amp; collab</dt>
+        <dd>Claude (Projects, Skills, AI-assisted workflows), Gemini, ChatGPT, Jira, Confluence, Salesforce</dd>
+      </dl>
+
+      <h2 class="prompt">cat experience.log</h2>
+      <ol class="timeline">
+        <li class="job">
+          <h3>UNIX / OpenShift Systems Administrator</h3>
+          <p class="job-meta"><span class="accent">Akamai Technologies</span> · <span>current role</span></p>
+          <ul>
+            <li>Administer Red Hat OpenShift clusters supporting internal and external services; monitor cluster health and alerts, coordinate upgrades, remediate vulnerabilities, and troubleshoot platform incidents.</li>
+            <li>Maintain OpenShift configuration through Infrastructure as Code and Git-based workflows, supporting controlled, repeatable infrastructure changes.</li>
+            <li>Operate RHEL, Ubuntu, Oracle Linux, and other UNIX/Linux systems on VMware vSphere, Azure, Linode, and physical Dell servers; investigate patch failures, service issues, and OS upgrades.</li>
+            <li>Troubleshoot filesystems, storage, access controls, networking, firewall rules, and BIND DNS; maintain DNS configuration changes in Git.</li>
+            <li>Use Ansible, MAUI, Git, Grafana, and other operational tools for automation, monitoring, and administration; oversee hardware health and firmware with Dell OpenManage Enterprise.</li>
+            <li>Coordinate with Red Hat and cross-functional teams on complex support cases, production issues, infrastructure changes, and stakeholder requests; apply Claude and Gemini to research, scripting, and documentation.</li>
+          </ul>
+        </li>
+        <li class="job">
+          <h3>Senior Product Support Engineer – VMware Tanzu</h3>
+          <p class="job-meta"><span class="accent">VMware</span> · <span>Aug 2022 – Apr 2024</span></p>
+          <ul>
+            <li>Owned and troubleshot enterprise Tanzu support cases, including issues reported by Fortune 500 customers; reproduced problems in labs, researched root causes, communicated findings, and engaged engineering for escalations.</li>
+            <li>Supported Tanzu Kubernetes Grid Integrated (TKGi), Tanzu Kubernetes Grid Multicloud (TKGm), Tanzu Mission Control (TMC), vSphere, and NSX-T.</li>
+            <li>Investigated issues involving Tanzu ecosystem technologies such as Velero, Antrea, BOSH, Pinniped, and Grafana.</li>
+            <li>Mentored newer support engineers through ticket shadowing, knowledge sharing, and live troubleshooting on complex customer calls.</li>
+          </ul>
+        </li>
+        <li class="job">
+          <h3>Tanzu Product Support Engineer II</h3>
+          <p class="job-meta"><span class="accent">VMware</span> · <span>Jul 2021 – Aug 2022</span></p>
+          <ul>
+            <li>Supported customers using VMware Tanzu technologies, investigating product issues and coordinating technical troubleshooting and escalations.</li>
+          </ul>
+        </li>
+        <li class="job">
+          <h3>Technical Support Engineer L2 – Calix Networks</h3>
+          <p class="job-meta"><span class="accent">CSS Corp</span> · <span>Aug 2020 – Jul 2021</span></p>
+          <ul>
+            <li>Provided technical support to service providers worldwide, troubleshooting Active Ethernet, GPON, and xDSL networks using Calix C7, B6, E7, and the CMS management platform.</li>
+          </ul>
+        </li>
+        <li class="job">
+          <h3>Senior L1 Juniper TAC Technician</h3>
+          <p class="job-meta"><span class="accent">Concentrix</span> · <span>Aug 2015 – Jan 2020</span></p>
+          <ul>
+            <li>Troubleshot Juniper SRX routing, switching, and security issues using CLI diagnostics and packet analysis; worked with TCP/IP, BGP, OSPF, RIP, and common networking protocols.</li>
+          </ul>
+        </li>
+      </ol>
+
+      <h2 class="prompt">ls ~/projects --selected</h2>
+      <div class="grid">
+        <a class="card" href="projects.html">
+          <h3>Technical knowledge base &amp; personal website</h3>
+          <p>GitHub Pages site with an interactive terminal, searchable documentation, and practical runbooks covering Kubernetes/OpenShift, Linux, DNS, and self-hosted infrastructure. Built with AI assistance from Claude.</p>
+          <ul class="tags"><li>github-pages</li><li>javascript</li><li>runbooks</li><li>claude</li></ul>
+        </a>
+      </div>
+
+      <h2 class="prompt">cat credentials.txt</h2>
+      <dl class="kv">
+        <dt>Claude 101</dt>
+        <dd>Course completion badge · Claude Academy (Anthropic) · <a href="https://academy.claude.com/verify/2cfe46139d8d91d649dbb065b2da72d7">verify credential</a></dd>
+      </dl>
     </div>
   </main>
 

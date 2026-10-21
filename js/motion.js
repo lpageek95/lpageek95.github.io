@@ -155,7 +155,7 @@
   /* ---------- Scroll reveal ---------- */
   if (!reduceMotion && "IntersectionObserver" in window) {
     var targets = document.querySelectorAll(
-      ".hero, .terminal, main h2, main .grid:not(#kb-grid) > .card, .kb-stats, .kb-controls," +
+      ".hero, .terminal, main h2, .job, main .grid:not(#kb-grid) > .card, .kb-stats, .kb-controls," +
       " .prose > p, .prose > ul, .prose > ol, .prose > .callout, .prose > .table-wrap, .prose > pre," +
       " .prose .scenario, .toc, .article-footer"
     );

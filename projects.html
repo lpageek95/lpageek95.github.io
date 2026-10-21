@@ -30,30 +30,22 @@
   <main>
     <div class="container">
       <h1 class="prompt">ls ~/projects</h1>
-      <p class="muted">A few things I've built. <span class="accent">Placeholder entries</span> — real projects coming soon.</p>
+      <p class="muted">Things I've built and written up. More coming as I finish them.</p>
 
-      <!-- TODO: replace these 4 placeholder cards with real projects -->
       <div class="grid">
-        <article class="card">
-          <h3>cluster-health-check<span class="badge">placeholder</span></h3>
-          <p>Script that sweeps an OpenShift/Kubernetes cluster for degraded operators, pending pods and expiring certs, and prints a summary.</p>
-          <ul class="tags"><li>bash</li><li>openshift</li><li>kubernetes</li></ul>
-        </article>
-        <article class="card">
-          <h3>homelab-tanzu<span class="badge">placeholder</span></h3>
-          <p>Notes and automation for standing up a small vSphere + Tanzu lab on commodity hardware.</p>
-          <ul class="tags"><li>vmware</li><li>tanzu</li><li>ansible</li></ul>
-        </article>
-        <article class="card">
-          <h3>net-diag-toolkit<span class="badge">placeholder</span></h3>
-          <p>Collection of helpers for tracing DNS, MTU and routing issues between nodes and services.</p>
-          <ul class="tags"><li>networking</li><li>python</li></ul>
-        </article>
-        <article class="card">
-          <h3>log-triage-ai<span class="badge">placeholder</span></h3>
-          <p>Experiment using an LLM to summarize noisy system logs and suggest likely root causes.</p>
-          <ul class="tags"><li>ai</li><li>python</li><li>observability</li></ul>
-        </article>
+        <a class="card" href="knowledge-base.html">
+          <h3>knowledge-base &amp; this site</h3>
+          <p>This site: a GitHub Pages site with an interactive terminal, searchable documentation,
+             and practical runbooks covering Kubernetes/OpenShift, Linux, DNS, and self-hosted
+             infrastructure. Built with AI assistance from Claude.</p>
+          <ul class="tags"><li>github-pages</li><li>javascript</li><li>runbooks</li><li>claude</li></ul>
+        </a>
+        <a class="card" href="articles/bitcoin-node-docker-ubuntu.html">
+          <h3>bitcoin-node-docker</h3>
+          <p>Self-hosted Bitcoin Core full node on Ubuntu, packaged with Docker Compose: verified
+             release build, persistent storage, port forwarding, and sync monitoring with bitcoin-cli.</p>
+          <ul class="tags"><li>docker</li><li>ubuntu</li><li>self-hosted</li><li>crypto</li></ul>
+        </a>
       </div>
     </div>
   </main>
