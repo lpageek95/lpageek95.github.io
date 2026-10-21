@@ -18,7 +18,7 @@
   <meta property="article:tag" content="networking">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="stylesheet" href="../css/motion.css">
 </head>
@@ -136,7 +136,8 @@
         </p>
         <pre data-label="check"><code class="language-bash">sudo vgs        # VFree = unallocated space in the volume group
 df -h /</code></pre>
-        <pre class="changes" data-label="grow root to the full disk"><code class="language-bash">sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv   # -r resizes the filesystem as well
+        <pre class="changes" data-label="grow root to the full disk"><code class="language-bash"># -r resizes the filesystem as well
+sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
 df -h /</code></pre>
         <div class="callout warn">
           <span class="callout-title">Why it matters</span>

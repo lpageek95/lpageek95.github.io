@@ -11,7 +11,7 @@
   <meta property="og:description" content="Ollama, Open WebUI, Traefik and Prometheus/Grafana on a single-node k3s cluster, CPU-only, built from scratch on Ubuntu Server 24.04.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inconsolata:wght@400;600&family=JetBrains+Mono:wght@400;700&display=swap">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="stylesheet" href="../css/motion.css">
 </head>
@@ -153,7 +153,8 @@
           <li><strong>6 vCPU, 8 GB RAM, 60 GB disk.</strong> 4 vCPU works, just slower. RAM is the real limit: it decides the model size.</li>
           <li><strong>A CPU that exposes AVX2.</strong> llama.cpp, which Ollama runs on, is several times slower without it. Check with:</li>
         </ul>
-        <pre data-label="check CPU features"><code class="language-bash">grep -o -w 'avx\|avx2\|fma' /proc/cpuinfo | sort -u   # expect: avx, avx2, fma</code></pre>
+        <pre data-label="check CPU features"><code class="language-bash"># expect: avx, avx2, fma
+grep -o -w 'avx\|avx2\|fma' /proc/cpuinfo | sort -u</code></pre>
         <div class="callout">
           <span class="callout-title">Running the node as a VM?</span>
           <p>Hypervisors don't always pass AVX2 through to the guest. If the flags are missing, see
@@ -168,8 +169,11 @@
           the disk. Container images are large, so claim the rest before installing anything.
           Skipping this step caused the <a href="#incident">incident</a> later on.
         </p>
-        <pre class="changes" data-label="extend root LV to the full disk"><code class="language-bash">sudo vgs                                              # VFree shows the unallocated space
-sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv  # -r grows the filesystem too
+        <pre class="changes" data-label="extend root LV to the full disk"><code class="language-bash"># VFree shows the unallocated space
+sudo vgs
+
+# -r grows the filesystem together with the volume
+sudo lvextend -r -l +100%FREE /dev/ubuntu-vg/ubuntu-lv
 df -h /</code></pre>
 
         <h3 id="swap">Update and disable swap</h3>
@@ -190,8 +194,11 @@ sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
 sudo chown $USER:$USER ~/.kube/config
 export KUBECONFIG=~/.kube/config</code></pre>
         <pre data-label="verify"><code class="language-bash">kubectl get nodes          # Ready
-kubectl get pods -A        # coredns, traefik, metrics-server, local-path-provisioner Running
-kubectl get storageclass   # local-path (default)</code></pre>
+kubectl get storageclass   # local-path (default)
+
+# expect coredns, traefik, metrics-server and
+# local-path-provisioner all Running
+kubectl get pods -A</code></pre>
 
         <h2 id="phase-2">Phase 2: Model server</h2>
         <p>

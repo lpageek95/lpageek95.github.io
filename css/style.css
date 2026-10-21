@@ -11,6 +11,8 @@
   --muted: #7f9490;
   --border: #1f2e2a;
   --font: "JetBrains Mono", "Fira Code", ui-monospace, Consolas, monospace;
+  /* Code blocks: real Consolas on Windows, Inconsolata (a Consolas-style web font) elsewhere */
+  --code-font: Consolas, "Inconsolata", "Cascadia Mono", ui-monospace, monospace;
   --maxw: 960px;
 }
 
@@ -354,21 +356,23 @@ kbd {
 .prose pre {
   position: relative;
   margin: .8rem 0 1.2rem;
-  padding: .9rem 1rem;
+  padding: 1rem 1.15rem;
   background: #050807;
   border: 1px solid var(--border);
   border-left: 3px solid var(--blue);
   border-radius: 4px;
   overflow-x: auto;
-  font-size: .84rem;
-  line-height: 1.55;
+  font-family: var(--code-font);
+  font-size: .98rem;
+  line-height: 1.6;
   tab-size: 2;
 }
-.prose pre code { font-family: inherit; white-space: pre; }
+.prose pre code { font-family: inherit; font-size: inherit; white-space: pre; }
 .prose pre[data-label]::before {
   content: attr(data-label);
   display: block;
   margin-bottom: .5rem;
+  font-family: var(--font);
   font-size: .72rem;
   letter-spacing: .04em;
   text-transform: uppercase;
@@ -561,7 +565,7 @@ kbd {
   .kv { grid-template-columns: 1fr; gap: 0 0; }
   .kv dd { margin-bottom: .6rem; }
   .article h1 { font-size: 1.35rem; }
-  .prose pre { font-size: .78rem; padding: .75rem .8rem; }
+  .prose pre { font-size: .9rem; padding: .8rem .85rem; }
   .prose td code { white-space: normal; }
   .prose h2, .prose h3 { scroll-margin-top: 8rem; } /* header wraps to two lines on phones */
   .article-pager { grid-template-columns: 1fr; }
