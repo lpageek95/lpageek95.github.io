@@ -479,6 +479,28 @@ kbd {
 .token.important, .token.bold { font-weight: 700; }
 
 /* ==========================================================================
+   Under-construction block (projects page)
+   ========================================================================== */
+.construction {
+  border: 1px dashed var(--amber);
+  border-radius: 6px;
+  padding: 1.2rem;
+  max-width: 65ch;
+}
+.construction .warn-line { color: var(--amber); font-weight: 700; margin-top: 0; overflow-wrap: anywhere; }
+.construction p:last-child { margin-bottom: 0; }
+.build-log {
+  margin: 0 0 1rem;
+  padding: .8rem 1rem;
+  background: #050807;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: .85rem;
+  overflow-x: auto;
+}
+
+/* ==========================================================================
    Terminal widget
    ========================================================================== */
 .terminal {

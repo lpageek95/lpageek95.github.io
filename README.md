@@ -47,7 +47,7 @@ python -m http.server 8000
 
 - **Bio**: teaser in `index.html`, full version in `about.html`.
 - **Resume**: `resume.html` (kept in sync with the CV by hand).
-- **Projects**: cards in `projects.html`.
+- **Projects**: `projects.html` shows an under-construction notice plus featured links (KB, latest article, resume) until the first project ships.
 
 Contact links (GitHub + LinkedIn, no email by design) appear in the footer of
 every page, in `about.html#contact`, and in the `CONTACT` array at the top of

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Projects — Mario Paniagua</title>
-  <meta name="description" content="Projects in infrastructure automation, Kubernetes/OpenShift, networking and AI.">
+  <meta name="description" content="Projects in infrastructure, Kubernetes/OpenShift, networking and AI. First project in progress.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
@@ -30,21 +30,35 @@
   <main>
     <div class="container">
       <h1 class="prompt">ls ~/projects</h1>
-      <p class="muted">Things I've built and written up. More coming as I finish them.</p>
+      <section class="construction" aria-label="Projects under construction">
+        <p class="warn-line">ls: cannot access '~/projects': No such file or directory</p>
+        <pre class="build-log" aria-hidden="true">$ git status
+On branch main
+<span class="accent">first-project/</span>: work in progress, not committed yet
+$ ./deploy.sh
+<span class="muted">waiting for first-project ... queued</span></pre>
+        <p>
+          The first hands-on project is being built right now. Check back soon.
+          Until then, here's what is already on the site.
+        </p>
+      </section>
 
+      <h2 class="prompt">ls ~/related --featured</h2>
       <div class="grid">
         <a class="card" href="knowledge-base.html">
-          <h3>knowledge-base &amp; this site</h3>
-          <p>This site: a GitHub Pages site with an interactive terminal, searchable documentation,
-             and practical runbooks covering Kubernetes/OpenShift, Linux, DNS, and self-hosted
-             infrastructure. Built with AI assistance from Claude.</p>
-          <ul class="tags"><li>github-pages</li><li>javascript</li><li>runbooks</li><li>claude</li></ul>
+          <h3>knowledge-base/<span class="badge">runbooks</span></h3>
+          <p>Practical runbooks on Kubernetes/OpenShift, Linux, DNS, and self-hosted infrastructure, with search and filters.</p>
+          <ul class="tags"><li>kubernetes</li><li>linux</li><li>dns</li></ul>
         </a>
         <a class="card" href="articles/bitcoin-node-docker-ubuntu.html">
-          <h3>bitcoin-node-docker</h3>
-          <p>Self-hosted Bitcoin Core full node on Ubuntu, packaged with Docker Compose: verified
-             release build, persistent storage, port forwarding, and sync monitoring with bitcoin-cli.</p>
-          <ul class="tags"><li>docker</li><li>ubuntu</li><li>self-hosted</li><li>crypto</li></ul>
+          <h3>latest article<span class="badge">kb</span></h3>
+          <p>Running a Bitcoin full node on Ubuntu with Bitcoin Core in Docker: verified build, persistent storage, and sync monitoring.</p>
+          <ul class="tags"><li>docker</li><li>ubuntu</li><li>self-hosted</li></ul>
+        </a>
+        <a class="card" href="resume.html">
+          <h3>resume.txt<span class="badge">cv</span></h3>
+          <p>10+ years across Linux/UNIX, OpenShift and Kubernetes, VMware Tanzu, and networking.</p>
+          <ul class="tags"><li>openshift</li><li>tanzu</li><li>networking</li></ul>
         </a>
       </div>
     </div>
